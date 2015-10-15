@@ -2,6 +2,7 @@ mod cpu;
 mod mmu;
 mod registers;
 
+#[allow(dead_code)]
 fn main() {
     let mut cpu = cpu::Cpu::new();
     cpu.reset();

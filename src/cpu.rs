@@ -186,6 +186,9 @@ impl Cpu {
             0x10 => { self.r.pc += 1; 1 }
             0x11 => ld_nn!(d, e), // LD DE, nn
             0x12 => { m.wb(self.r.de(), self.r.a); 2 } // LD (DE), A
+            0x13 => inc_ss!(d, e), // INC DE
+            0x14 => inc!(d), // INC D
+            0x15 => dec!(d), // DEC D
             0x80 => add_r!(b), // ADD A, B
 
             _ => 0
@@ -601,6 +604,99 @@ mod test {
         c.r.e = 0x04;
         op(&mut c, &mut m, 0x12, 1, 2);
         assert_eq!(m.rb(0xd004), 0xab);
+    }
+
+    #[test]
+    fn inc_de() {
+        let (mut c, mut m) = init();
+        c.r.d = 0x01;
+        c.r.e = 0x34;
+        op(&mut c, &mut m, 0x13, 1, 2);
+        assert_eq!(c.r.d, 0x01);
+        assert_eq!(c.r.e, 0x35);
+    }
+
+    #[test]
+    fn inc_de_half_carry() {
+        let (mut c, mut m) = init();
+        c.r.d = 0x01;
+        c.r.e = 0xff;
+        op(&mut c, &mut m, 0x13, 1, 2);
+        assert_eq!(c.r.d, 0x02);
+        assert_eq!(c.r.e, 0x00);
+    }
+
+    #[test]
+    fn inc_de_carry() {
+        let (mut c, mut m) = init();
+        c.r.d = 0xff;
+        c.r.e = 0xff;
+        op(&mut c, &mut m, 0x13, 1, 2);
+        assert_eq!(c.r.d, 0x00);
+        assert_eq!(c.r.e, 0x00);
+    }
+
+    #[test]
+    fn inc_d() {
+        let (mut c, mut m) = init();
+        c.r.d = 0x00;
+        op(&mut c, &mut m, 0x14, 1, 1);
+        assert_eq!(c.r.d, 0x01);
+        assert_eq!(c.r.f, 0x00);
+    }
+
+    #[test]
+    fn inc_d_zero() {
+        let (mut c, mut m) = init();
+        c.r.d = 0xff;
+        op(&mut c, &mut m, 0x14, 1, 1);
+        assert_eq!(c.r.d, 0x00);
+        assert_eq!(c.r.f, Z | H);
+    }
+
+    #[test]
+    fn inc_d_half_carry() {
+        let (mut c, mut m) = init();
+        c.r.d = 0x0f;
+        op(&mut c, &mut m, 0x14, 1, 1);
+        assert_eq!(c.r.d, 0x10);
+        assert_eq!(c.r.f, H);
+    }
+
+    #[test]
+    fn dec_d() {
+        let (mut c, mut m) = init();
+        c.r.d = 0x02;
+        op(&mut c, &mut m, 0x15, 1, 1);
+        assert_eq!(c.r.d, 0x01);
+        assert_eq!(c.r.f, N);
+    }
+
+    #[test]
+    fn dec_d_zero() {
+        let (mut c, mut m) = init();
+        c.r.d = 0x01;
+        op(&mut c, &mut m, 0x15, 1, 1);
+        assert_eq!(c.r.d, 0x00);
+        assert_eq!(c.r.f, Z | N);
+    }
+
+    #[test]
+    fn dec_d_half_carry() {
+        let (mut c, mut m) = init();
+        c.r.d = 0x10;
+        op(&mut c, &mut m, 0x15, 1, 1);
+        assert_eq!(c.r.d, 0x0f);
+        assert_eq!(c.r.f, N | H);
+    }
+
+    #[test]
+    fn dec_d_half_carry_underflow() {
+        let (mut c, mut m) = init();
+        c.r.d = 0x00;
+        op(&mut c, &mut m, 0x15, 1, 1);
+        assert_eq!(c.r.d, 0xff);
+        assert_eq!(c.r.f, N | H);
     }
 
     /*

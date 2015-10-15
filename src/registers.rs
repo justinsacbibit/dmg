@@ -26,9 +26,6 @@ impl Registers {
         self.m = 0; self.t = 0;
     }
 
-    // TODO: Remove
-    #[allow(dead_code)]
-    pub fn af(&self) -> u16 { pair!(self, a, f) }
     pub fn bc(&self) -> u16 { pair!(self, b, c) }
     pub fn de(&self) -> u16 { pair!(self, d, e) }
 }
