@@ -2,3 +2,8 @@
 name = "dmg"
 version = "0.1.0"
 authors = ["Justin Sacbibit <jsacbibit@gmail.com>"]
+
+[profile.dev]
+debug-assertions = false
+[profile.test]
+debug-assertions = false
