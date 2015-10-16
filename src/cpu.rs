@@ -203,6 +203,19 @@ impl Cpu {
                 self.r.pc = if pc < 0 { self.r.pc - (-pc) as u16 } else { self.r.pc + pc as u16};
                 3
             }
+            0x19 => add_hl!(d, e), // ADD HL, DE
+            0x1a => ld_a!(self.r.de()), // LD A, (DE)
+            0x1b => dec_ss!(d, e), // DEC DE
+            0x1c => inc!(e), // INC E
+            0x1d => dec!(e), // DEC E
+            0x1e => ld_n!(e), // LD E, n
+            0x1f => { // RRA
+                self.r.f &= C;
+                let carry = if self.r.a & 0x1 == 0x1 { C } else { 0x0 };
+                self.r.a = (self.r.a >> 1) | if self.r.f == C { 0x80 } else { 0x0 };
+                self.r.f = carry;
+                1
+            }
             0x80 => add_r!(b), // ADD A, B
 
             _ => 0
@@ -845,6 +858,129 @@ mod test {
         let (mut c, mut m) = init();
         m.wb(c.r.pc + 1, 0x7f);
         op(&mut c, &mut m, 0x18, 129, 3);
+    }
+
+    #[test]
+    fn add_hl_de() {
+        add_hl_rr!(d, e, 0x19);
+    }
+
+    #[test]
+    fn add_hl_de_carry() {
+        add_hl_rr_carry!(d, e, 0x19);
+    }
+
+    #[test]
+    fn add_hl_de_half_carry() {
+        add_hl_rr_half_carry!(d, e, 0x19);
+    }
+
+    #[test]
+    fn add_hl_de_only_carry() {
+        add_hl_rr_only_carry!(d, e, 0x19);
+    }
+
+    #[test]
+    fn ld_a_de() {
+        ld_a_rr!(d, e, 0x1a);
+    }
+
+    #[test]
+    fn dec_de() {
+        dec_rr!(d, e, 0x1b);
+    }
+
+    #[test]
+    fn dec_de_half_carry() {
+        dec_rr_half_carry!(d, e, 0x1b);
+    }
+
+    #[test]
+    fn dec_de_underflow() {
+        dec_rr_underflow!(d, e, 0x1b);
+    }
+
+    #[test]
+    fn inc_e() {
+        inc_r!(e, 0x1c);
+    }
+
+    #[test]
+    fn inc_e_half_carry() {
+        inc_r_half_carry!(e, 0x1c);
+    }
+
+    #[test]
+    fn inc_e_zero() {
+        inc_r_zero!(e, 0x1c);
+    }
+
+    #[test]
+    fn dec_e() {
+        dec_r!(e, 0x1d);
+    }
+
+    #[test]
+    fn dec_e_half_carry() {
+        dec_r_half_carry!(e, 0x1d);
+    }
+
+    #[test]
+    fn dec_e_underflow() {
+        dec_r_half_carry!(e, 0x1d);
+    }
+
+    #[test]
+    fn ld_e_n() {
+        ld_r_n!(e, 0x1e);
+    }
+
+    #[test]
+    fn rra() {
+        let (mut c, mut m) = init();
+        c.r.a = 0b10101010;
+        op(&mut c, &mut m, 0x1f, 1, 1);
+        assert_eq!(c.r.a, 0b01010101);
+        assert_eq!(c.r.f, 0x00);
+    }
+
+    #[test]
+    fn rra_into_carry() {
+        let (mut c, mut m) = init();
+        c.r.a = 0b11010101;
+        op(&mut c, &mut m, 0x1f, 1, 1);
+        assert_eq!(c.r.a, 0b01101010);
+        assert_eq!(c.r.f, C);
+    }
+
+    #[test]
+    fn rra_from_carry() {
+        let (mut c, mut m) = init();
+        c.r.a = 0b01010100;
+        c.r.f = C;
+        op(&mut c, &mut m, 0x1f, 1, 1);
+        assert_eq!(c.r.a, 0b10101010);
+        assert_eq!(c.r.f, 0x00);
+    }
+
+    #[test]
+    fn rra_through_carry() {
+        let (mut c, mut m) = init();
+        c.r.a = 0b11010101;
+        c.r.f = C;
+        op(&mut c, &mut m, 0x1f, 1, 1);
+        assert_eq!(c.r.a, 0b11101010);
+        assert_eq!(c.r.f, C);
+    }
+
+    #[test]
+    fn rra_flags() {
+        let (mut c, mut m) = init();
+        c.r.a = 0b01010100;
+        c.r.f = Z | N | H | C;
+        op(&mut c, &mut m, 0x1f, 1, 1);
+        assert_eq!(c.r.a, 0b10101010);
+        assert_eq!(c.r.f, 0x00);
     }
 
     /*
