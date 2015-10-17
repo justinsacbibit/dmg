@@ -104,21 +104,26 @@ impl Cpu {
                 2
             })
         }
-        macro_rules! add_hl {
-            ($reg1: ident, $reg2: ident) => ({
+        macro_rules! add_hl_helper {
+            ($val: expr) => ({
                 self.r.f &= Z;
                 // TODO: Cleanup
-                self.r.f |= if ((((self.r.h as u16) << 8) | self.r.l as u16) & 0xfff) + ((((self.r.$reg1 as u16) << 8) | self.r.$reg2 as u16) & 0xfff) > 0xfff {
+                self.r.f |= if ((((self.r.h as u16) << 8) | self.r.l as u16) & 0xfff) + ($val & 0xfff) > 0xfff {
                     H
                 } else {
                     0
                 };
                 let result = ((self.r.h as u32) << 8 | self.r.l as u32)
-                    + ((self.r.$reg1 as u32) << 8 | self.r.$reg2 as u32);
+                    + $val as u32;
                 self.r.f |= if result > 0xffff { C } else { 0 };
                 self.r.h = (result >> 8) as u8;
                 self.r.l = result as u8;
                 2
+            })
+        }
+        macro_rules! add_hl {
+            ($reg1: ident, $reg2: ident) => ({
+                add_hl_helper!(((self.r.$reg1 as u16) << 8) | self.r.$reg2 as u16)
             })
         }
         macro_rules! ld_a {
@@ -308,6 +313,14 @@ impl Cpu {
                 m.wb(self.r.hl(), value);
                 3
             }
+            0x36 => { // LD (HL), n
+                let value = m.rb(self.bump());
+                m.wb(self.r.hl(), value);
+                3
+            }
+            0x37 => { self.r.f &= Z; self.r.f |= C; 1 },
+            0x38 => jr_e!(self.r.f & C == C), // JR C, e
+            0x39 => add_hl_helper!(self.r.sp), // ADD HL, SP
             0x80 => add_r!(b), // ADD A, B
 
             _ => 0
@@ -609,6 +622,33 @@ mod test {
             assert_eq!(c.r.$reg1, 0xff);
             assert_eq!(c.r.$reg2, 0xff);
             assert_eq!(c.r.f, 0x00);
+        })
+    }
+
+    macro_rules! jr_e_helper {
+        ($e: expr, $f: expr, $op: expr, $pc: expr, $t: expr) => ({
+            let (mut c, mut m) = init();
+            m.wb(c.r.pc + 1, $e);
+            c.r.f = $f;
+            op(&mut c, &mut m, $op, $pc, $t);
+        })
+    }
+
+    macro_rules! jr_e {
+        ($f: expr, $op: expr) => ({
+            jr_e_helper!(0x02, $f, $op, 4, 3);
+        })
+    }
+
+    macro_rules! jr_e_back {
+        ($f: expr, $op: expr) => ({
+            jr_e_helper!(0b11111100, $f, $op, -2, 3);
+        })
+    }
+
+    macro_rules! jr_e_no_jump {
+        ($f: expr, $op: expr) => ({
+            jr_e_helper!(0x02, $f, $op, 2, 2);
         })
     }
 
@@ -933,23 +973,12 @@ mod test {
 
     #[test]
     fn jr_e() {
-        let (mut c, mut m) = init();
-        m.wb(c.r.pc + 1, 0x01);
-        op(&mut c, &mut m, 0x18, 3, 3);
+        jr_e!(0x00, 0x18);
     }
 
     #[test]
     fn jr_e_back() {
-        let (mut c, mut m) = init();
-        m.wb(c.r.pc + 1, 0b11111100); // -4
-        op(&mut c, &mut m, 0x18, -2, 3);
-    }
-
-    #[test]
-    fn jr_e_big() {
-        let (mut c, mut m) = init();
-        m.wb(c.r.pc + 1, 0x7f);
-        op(&mut c, &mut m, 0x18, 129, 3);
+        jr_e_back!(0x00, 0x18);
     }
 
     #[test]
@@ -1077,26 +1106,17 @@ mod test {
 
     #[test]
     fn jr_nz_e() {
-        let (mut c, mut m) = init();
-        m.wb(c.r.pc + 1, 0x02);
-        c.r.f = 0x00;
-        op(&mut c, &mut m, 0x20, 4, 3);
+        jr_e!(0x00, 0x20);
     }
 
     #[test]
     fn jr_nz_e_back() {
-        let (mut c, mut m) = init();
-        m.wb(c.r.pc + 1, 0b11111100); // -4
-        c.r.f = 0x00;
-        op(&mut c, &mut m, 0x20, -2, 3);
+        jr_e_back!(0x00, 0x20);
     }
 
     #[test]
     fn jr_nz_e_no_jump() {
-        let (mut c, mut m) = init();
-        m.wb(c.r.pc + 1, 0x02);
-        c.r.f = Z;
-        op(&mut c, &mut m, 0x20, 2, 2);
+        jr_e_no_jump!(Z, 0x20);
     }
 
     #[test]
@@ -1168,25 +1188,17 @@ mod test {
 
     #[test]
     fn jr_z_e() {
-        let (mut c, mut m) = init();
-        m.wb(c.r.pc + 1, 0x02);
-        c.r.f = Z;
-        op(&mut c, &mut m, 0x28, 4, 3);
+        jr_e!(Z, 0x28);
     }
 
     #[test]
     fn jr_z_e_back() {
-        let (mut c, mut m) = init();
-        m.wb(c.r.pc + 1, 0b11111100); // -4
-        c.r.f = Z;
-        op(&mut c, &mut m, 0x28, -2, 3);
+        jr_e_back!(Z, 0x28);
     }
 
     #[test]
     fn jr_z_e_no_jump() {
-        let (mut c, mut m) = init();
-        m.wb(c.r.pc + 1, 0x02);
-        op(&mut c, &mut m, 0x28, 2, 2);
+        jr_e_no_jump!(0x00, 0x28);
     }
 
     fn add_hl_hl_helper(h: u8, l: u8, expected_h: u8, expected_l: u8, expected_f: u8) {
@@ -1265,6 +1277,69 @@ mod test {
         m.wb(0xd000, 0x12);
         op(&mut c, &mut m, 0x35, 1, 3);
         assert_eq!(m.rb(0xd000), 0x11);
+    }
+
+    #[test]
+    fn ld_hl_n() {
+        let (mut c, mut m) = init();
+        c.r.h = 0xd0;
+        c.r.l = 0x00;
+        m.wb(c.r.pc + 1, 0x12);
+        op(&mut c, &mut m, 0x36, 2, 3);
+        assert_eq!(m.rb(0xd000), 0x12);
+    }
+
+    #[test]
+    fn scf() {
+        let (mut c, mut m) = init();
+        op(&mut c, &mut m, 0x37, 1, 1);
+        assert_eq!(c.r.f, C);
+    }
+
+    #[test]
+    fn jr_c_e() {
+        jr_e!(C, 0x38);
+    }
+
+    #[test]
+    fn jr_c_e_back() {
+        jr_e_back!(C, 0x38);
+    }
+
+    #[test]
+    fn jr_c_e_no_jump() {
+        jr_e_no_jump!(0x00, 0x38);
+    }
+
+    fn add_hl_sp_helper(h: u8, l: u8, sp: u16, expected_h: u8, expected_l: u8, expected_f: u8) {
+        let (mut c, mut m) = init();
+        c.r.h = h;
+        c.r.l = l;
+        c.r.sp = sp;
+        op(&mut c, &mut m, 0x39, 1, 2);
+        assert_eq!(c.r.h, expected_h);
+        assert_eq!(c.r.l, expected_l);
+        assert_eq!(c.r.f, expected_f);
+    }
+
+    #[test]
+    fn add_hl_sp() {
+        add_hl_sp_helper(0x12, 0x34, 0x3451, 0x46, 0x85, 0x0);
+    }
+
+    #[test]
+    fn add_hl_sp_carry() {
+        add_hl_sp_helper(0xff, 0xff, 0x0002, 0x00, 0x01, H | C);
+    }
+
+    #[test]
+    fn add_hl_sp_half_carry() {
+        add_hl_sp_helper(0x18, 0x00, 0x0900, 0x21, 0x00, H);
+    }
+
+    #[test]
+    fn add_hl_sp_only_carry() {
+        add_hl_sp_helper(0x82, 0x00, 0x8000, 0x02, 0x00, C);
     }
 
     /*
