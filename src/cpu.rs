@@ -208,11 +208,7 @@ impl Cpu {
                 self.r.f = carry;
                 1
             }
-            0x18 => { // JR e
-                let pc = m.rb(self.bump()) as i8;
-                self.r.pc = if pc < 0 { self.r.pc - (-pc) as u16 } else { self.r.pc + pc as u16};
-                3
-            }
+            0x18 => jr_e!(true), // JR e
             0x19 => add_hl!(d, e), // ADD HL, DE
             0x1a => ld_a!(self.r.de()), // LD A, (DE)
             0x1b => dec_ss!(d, e), // DEC DE
@@ -266,6 +262,52 @@ impl Cpu {
             }
             0x28 => jr_e!(self.r.f & Z == Z), // JR Z, e
             0x29 => add_hl!(h, l), // ADD HL, HL
+            0x2a => { // LDI A, (HL)
+                self.r.a = m.rb(self.r.hl());
+                inc_ss!(h, l)
+            }
+            0x2b => dec_ss!(h, l), // DEC HL
+            0x2c => inc!(l), // INC L
+            0x2d => dec!(l), // DEC L
+            0x2e => ld_n!(l), // LD L, n
+            0x2f => { // CPL
+                self.r.a = !self.r.a;
+                self.r.f = N | H;
+                1
+            }
+            0x30 => jr_e!(self.r.f & C != C), // JR NC, e
+            0x31 => { // LD SP, nn
+                self.r.sp = m.rw(self.bump());
+                self.bump();
+                3
+            }
+            0x32 => { // LDD (HL), A
+                m.wb(self.r.hl(), self.r.a);
+                dec_ss!(h, l)
+            }
+            0x33 => { // INC SP
+                self.r.sp += 1;
+                2
+            }
+            0x34 => { // INC (HL)
+                let mut value = m.rb(self.r.hl());
+                value += 1;
+                self.r.f &= C;
+                self.r.f |= if value == 0 { Z } else { 0 };
+                self.r.f |= if value & 0xf == 0 { H } else { 0 };
+                m.wb(self.r.hl(), value);
+                3
+            }
+            0x35 => { // DEC (HL)
+                let mut value = m.rb(self.r.hl());
+                value -= 1;
+                self.r.f &= C;
+                self.r.f |= N;
+                self.r.f |= if value == 0 { Z } else { 0 };
+                self.r.f |= if value & 0xf == 0xf { H } else { 0 };
+                m.wb(self.r.hl(), value);
+                3
+            }
             0x80 => add_r!(b), // ADD A, B
 
             _ => 0
@@ -1147,27 +1189,84 @@ mod test {
         op(&mut c, &mut m, 0x28, 2, 2);
     }
 
-    /*
+    fn add_hl_hl_helper(h: u8, l: u8, expected_h: u8, expected_l: u8, expected_f: u8) {
+        let (mut c, mut m) = init();
+        c.r.h = h;
+        c.r.l = l;
+        op(&mut c, &mut m, 0x29, 1, 2);
+        assert_eq!(c.r.h, expected_h);
+        assert_eq!(c.r.l, expected_l);
+        assert_eq!(c.r.f, expected_f);
+    }
+
     #[test]
     fn add_hl_hl() {
-        add_hl_rr!(h, l, 0x29);
+        add_hl_hl_helper(0x12, 0x34, 0x24, 0x68, 0x0);
     }
 
     #[test]
     fn add_hl_hl_carry() {
-        add_hl_rr_carry!(h, l, 0x29);
+        add_hl_hl_helper(0x88, 0x88, 0x11, 0x10, H | C);
     }
 
     #[test]
     fn add_hl_hl_half_carry() {
-        add_hl_rr_half_carry!(h, l, 0x29);
+        add_hl_hl_helper(0x18, 0x00, 0x30, 0x00, H);
     }
 
     #[test]
     fn add_hl_hl_only_carry() {
-        add_hl_rr_only_carry!(h, l, 0x29);
+        add_hl_hl_helper(0x82, 0x00, 0x04, 0x00, C);
     }
-    */
+
+    #[test]
+    fn ld_sp_nn() {
+        let (mut c, mut m) = init();
+        m.ww(c.r.pc + 1, 0x1234);
+        op(&mut c, &mut m, 0x31, 3, 3);
+        assert_eq!(c.r.sp, 0x1234);
+    }
+
+    #[test]
+    fn ldd_hl_a() {
+        let (mut c, mut m) = init();
+        c.r.a = 0xab;
+        c.r.h = 0xd2;
+        c.r.l = 0xff;
+        op(&mut c, &mut m, 0x32, 1, 2);
+        assert_eq!(m.rb(0xd2ff), 0xab);
+        assert_eq!(c.r.h, 0xd2);
+        assert_eq!(c.r.l, 0xfe);
+    }
+
+    #[test]
+    fn inc_sp() {
+        let (mut c, mut m) = init();
+        c.r.sp = 0x1234;
+        op(&mut c, &mut m, 0x33, 1, 2);
+        assert_eq!(c.r.sp, 0x1235);
+    }
+
+    #[test]
+    fn inc_at_hl() {
+        let (mut c, mut m) = init();
+        c.r.h = 0xd0;
+        c.r.l = 0x00;
+        m.wb(0xd000, 0x12);
+        op(&mut c, &mut m, 0x34, 1, 3);
+        assert_eq!(m.rb(0xd000), 0x13);
+    }
+
+    #[test]
+    fn dec_at_hl() {
+        let (mut c, mut m) = init();
+        c.r.h = 0xd0;
+        c.r.l = 0x00;
+        m.wb(0xd000, 0x12);
+        op(&mut c, &mut m, 0x35, 1, 3);
+        assert_eq!(m.rb(0xd000), 0x11);
+    }
+
     /*
     #[test]
     fn add_a_b() {
