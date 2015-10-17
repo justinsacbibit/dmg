@@ -28,4 +28,5 @@ impl Registers {
 
     pub fn bc(&self) -> u16 { pair!(self, b, c) }
     pub fn de(&self) -> u16 { pair!(self, d, e) }
+    pub fn hl(&self) -> u16 { pair!(self, h, l) }
 }

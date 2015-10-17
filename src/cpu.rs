@@ -155,6 +155,17 @@ impl Cpu {
                 1
             })
         }
+        macro_rules! jr_e {
+            ($cond: expr) => ({
+                let e = m.rb(self.bump()) as i8;
+                if $cond {
+                    if e < 0 { self.r.pc -= (-e) as u16; } else { self.r.pc += e as u16; }
+                    3
+                } else {
+                    2
+                }
+            })
+        }
 
         let m_cycle = match instr {
             0x00 => 1, // NOP
@@ -199,7 +210,6 @@ impl Cpu {
             }
             0x18 => { // JR e
                 let pc = m.rb(self.bump()) as i8;
-                println!("{}", pc);
                 self.r.pc = if pc < 0 { self.r.pc - (-pc) as u16 } else { self.r.pc + pc as u16};
                 3
             }
@@ -216,6 +226,46 @@ impl Cpu {
                 self.r.f = carry;
                 1
             }
+            0x20 => jr_e!(self.r.f & Z != Z),
+            0x21 => ld_nn!(h, l), // LD HL, nn
+            0x22 => { // LDI (HL), A
+                m.wb(self.r.hl(), self.r.a);
+                inc_ss!(h, l)
+            }
+            0x23 => inc_ss!(h, l), // INC HL
+            0x24 => inc!(h), // INC H
+            0x25 => dec!(h), // DEC H
+            0x26 => ld_n!(h), // LD H
+            0x27 => { // DAA
+                // This beast is missing tests
+                let mut a = self.r.a as u16;
+                if self.r.f & N != N {
+                    if self.r.f & H == H || (a & 0xf) > 0x9 {
+                        a += 0x06;
+                    }
+                    if self.r.f & C == C || a > 0x9f {
+                        a += 0x60;
+                    }
+                } else {
+                    if self.r.f & H == H {
+                        a = (a - 6) & 0xff;
+                    }
+                    if self.r.f & C == C {
+                        a -= 0x60;
+                    }
+                }
+                self.r.f &= !(Z | H);
+                if (a & 0x100) == 0x100 {
+                    self.r.f |= C;
+                }
+                if a == 0 {
+                    self.r.f |= Z;
+                }
+                self.r.a = a as u8;
+                1
+            }
+            0x28 => jr_e!(self.r.f & Z == Z), // JR Z, e
+            0x29 => add_hl!(h, l), // ADD HL, HL
             0x80 => add_r!(b), // ADD A, B
 
             _ => 0
@@ -983,6 +1033,141 @@ mod test {
         assert_eq!(c.r.f, 0x00);
     }
 
+    #[test]
+    fn jr_nz_e() {
+        let (mut c, mut m) = init();
+        m.wb(c.r.pc + 1, 0x02);
+        c.r.f = 0x00;
+        op(&mut c, &mut m, 0x20, 4, 3);
+    }
+
+    #[test]
+    fn jr_nz_e_back() {
+        let (mut c, mut m) = init();
+        m.wb(c.r.pc + 1, 0b11111100); // -4
+        c.r.f = 0x00;
+        op(&mut c, &mut m, 0x20, -2, 3);
+    }
+
+    #[test]
+    fn jr_nz_e_no_jump() {
+        let (mut c, mut m) = init();
+        m.wb(c.r.pc + 1, 0x02);
+        c.r.f = Z;
+        op(&mut c, &mut m, 0x20, 2, 2);
+    }
+
+    #[test]
+    fn ld_hl_nn() {
+        ld_rr_nn!(h, l, 0x21);
+    }
+
+    #[test]
+    fn ldi_hl_a() {
+        let (mut c, mut m) = init();
+        c.r.a = 0xab;
+        c.r.h = 0xd2;
+        c.r.l = 0xff;
+        op(&mut c, &mut m, 0x22, 1, 2);
+        assert_eq!(m.rb(0xd2ff), 0xab);
+        assert_eq!(c.r.h, 0xd3);
+        assert_eq!(c.r.l, 0x00);
+    }
+
+    #[test]
+    fn inc_hl() {
+        inc_rr!(h, l, 0x23);
+    }
+
+    #[test]
+    fn inc_hl_half_carry() {
+        inc_rr_half_carry!(h, l, 0x23);
+    }
+
+    #[test]
+    fn inc_hl_overflow() {
+        inc_rr_overflow!(h, l, 0x23);
+    }
+
+    #[test]
+    fn inc_h() {
+        inc_r!(h, 0x24);
+    }
+
+    #[test]
+    fn inc_h_half_carry() {
+        inc_r_half_carry!(h, 0x24);
+    }
+
+    #[test]
+    fn inc_h_zero() {
+        inc_r_zero!(h, 0x24);
+    }
+
+    #[test]
+    fn dec_h() {
+        dec_r!(h, 0x25);
+    }
+
+    #[test]
+    fn dec_h_half_carry() {
+        dec_r_half_carry!(h, 0x25);
+    }
+
+    #[test]
+    fn dec_h_zero() {
+        dec_r_zero!(h, 0x25);
+    }
+
+    #[test]
+    fn ld_h_n() {
+        ld_r_n!(h, 0x26);
+    }
+
+    #[test]
+    fn jr_z_e() {
+        let (mut c, mut m) = init();
+        m.wb(c.r.pc + 1, 0x02);
+        c.r.f = Z;
+        op(&mut c, &mut m, 0x28, 4, 3);
+    }
+
+    #[test]
+    fn jr_z_e_back() {
+        let (mut c, mut m) = init();
+        m.wb(c.r.pc + 1, 0b11111100); // -4
+        c.r.f = Z;
+        op(&mut c, &mut m, 0x28, -2, 3);
+    }
+
+    #[test]
+    fn jr_z_e_no_jump() {
+        let (mut c, mut m) = init();
+        m.wb(c.r.pc + 1, 0x02);
+        op(&mut c, &mut m, 0x28, 2, 2);
+    }
+
+    /*
+    #[test]
+    fn add_hl_hl() {
+        add_hl_rr!(h, l, 0x29);
+    }
+
+    #[test]
+    fn add_hl_hl_carry() {
+        add_hl_rr_carry!(h, l, 0x29);
+    }
+
+    #[test]
+    fn add_hl_hl_half_carry() {
+        add_hl_rr_half_carry!(h, l, 0x29);
+    }
+
+    #[test]
+    fn add_hl_hl_only_carry() {
+        add_hl_rr_only_carry!(h, l, 0x29);
+    }
+    */
     /*
     #[test]
     fn add_a_b() {
