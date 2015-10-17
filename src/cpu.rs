@@ -254,7 +254,7 @@ impl Cpu {
                         a -= 0x60;
                     }
                 }
-                self.r.f &= !(Z | H);
+                self.r.f &= !(Z | H | C);
                 if (a & 0x100) == 0x100 {
                     self.r.f |= C;
                 }
