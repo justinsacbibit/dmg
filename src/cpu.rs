@@ -409,6 +409,15 @@ impl Cpu {
             0x74 => ld_hl_r!(h), // LD (HL), H
             0x75 => ld_hl_r!(l), // LD (HL), L
             0x76 => { 1 } // TODO: HALT
+            0x77 => ld_hl_r!(a), // LD (HL), A
+            0x78 => ld_r_r!(a, b), // LD A, B
+            0x79 => ld_r_r!(a, c), // LD A, C
+            0x7a => ld_r_r!(a, d), // LD A, D
+            0x7b => ld_r_r!(a, e), // LD A, E
+            0x7c => ld_r_r!(a, h), // LD A, H
+            0x7d => ld_r_r!(a, l), // LD A, L
+            0x7e => ld_r_hl!(a), // LD A, (HL)
+            0x7f => ld_r_r!(a, a), // LD A, A
             0x80 => add_r!(b), // ADD A, B
 
             _ => 0
@@ -1872,9 +1881,9 @@ mod test {
     fn ld_hl_h() {
         let (mut c, mut m) = init();
         c.r.h = 0xd0;
-        c.r.l = 0x12;
+        c.r.l = 0x00;
         op(&mut c, &mut m, 0x74, 1, 2);
-        assert_eq!(m.rb(0xd012), 0xd0);
+        assert_eq!(m.rb(0xd000), 0xd0);
     }
 
     #[test]
@@ -1890,6 +1899,74 @@ mod test {
     fn halt() {
         // TODO
     }
+
+    #[test]
+    fn ld_hl_a() {
+        ld_hl_r!(a, 0x77);
+    }
+
+    #[test]
+    fn ld_a_b() {
+        ld_r_r!(a, b, 0x78);
+    }
+
+    #[test]
+    fn ld_a_c() {
+        ld_r_r!(a, c, 0x79);
+    }
+
+    #[test]
+    fn ld_a_d() {
+        ld_r_r!(a, d, 0x7a);
+    }
+
+    #[test]
+    fn ld_a_e() {
+        ld_r_r!(a, e, 0x7b);
+    }
+
+    #[test]
+    fn ld_a_h() {
+        ld_r_r!(a, h, 0x7c);
+    }
+
+    #[test]
+    fn ld_a_l() {
+        ld_r_r!(a, l, 0x7d);
+    }
+
+    #[test]
+    fn ld_a_hl() {
+        ld_r_hl!(a, 0x7e);
+    }
+
+    #[test]
+    fn ld_a_a() {
+        ld_r_r!(a, a, 0x7f);
+    }
+
+    macro_rules! add_r_r_helper {
+        ($r1: ident, $r2: ident, $r1_val: expr, $r2_val: expr, $op: expr, $expected_f: expr) => ({
+            let (mut c, mut m) = init();
+            c.r.$r1 = $r1_val;
+            c.r.$r2 = $r2_val;
+            op(&mut c, &mut m, $op, 1, 1);
+            assert_eq!(c.r.$r1, $r1_val + $r2_val);
+            assert_eq!(c.r.f, $expected_f);
+        })
+    }
+
+    macro_rules! add_r_r {
+        ($r1: ident, $r2: ident) => ({
+            add_r_r_helper!($r1, $r2, 0x12, 0x34, 0x80, 0x00);
+        })
+    }
+
+    /*
+    macro_rules! add_r_r_zero {
+        
+    }
+    */
 
     /*
     #[test]
