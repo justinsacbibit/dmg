@@ -141,23 +141,25 @@ impl Cpu {
                 2
             })
         }
-        macro_rules! add_r {
-            ($reg: ident) => ({
+        macro_rules! add_adc_a_helper {
+            ($val: expr, $c: expr) => ({
                 self.r.f = 0;
-                if (self.r.a & 0xF) + (self.r.$reg & 0xF) > 0xF {
-                    // Half carry
-                    self.r.f |= H;
-                }
-                if (self.r.a as u32) + (self.r.$reg as u32) > 255 {
-                    // Carry
-                    self.r.f |= C;
-                }
-                self.r.a += self.r.$reg;
-                if self.r.a == 0 {
-                    // Zero
-                    self.r.f |= Z;
-                }
+                if (self.r.a & 0xf) + ($val & 0xf) + $c > 0xf { self.r.f |= H; }
+                if self.r.a as u16 + $val as u16 + $c as u16 > 0xff { self.r.f |= C; }
+                self.r.a += $val;
+                self.r.a += $c;
+                if self.r.a == 0 { self.r.f |= Z; }
                 1
+            })
+        }
+        macro_rules! add_a_helper {
+            ($val: expr) => ({
+                add_adc_a_helper!($val, 0x00)
+            })
+        }
+        macro_rules! add_a_r {
+            ($reg: ident) => ({
+                add_a_helper!(self.r.$reg)
             })
         }
         macro_rules! jr_e {
@@ -187,6 +189,17 @@ impl Cpu {
             ($r: ident) => ({
                 m.wb(self.r.hl(), self.r.$r);
                 2
+            })
+        }
+        macro_rules! adc_a_helper {
+            ($val: expr) => ({
+                let c = if self.r.f & C == C { 0x1 } else { 0 };
+                add_adc_a_helper!($val, c)
+            })
+        }
+        macro_rules! adc_a_r {
+            ($r: ident) => ({
+                adc_a_helper!(self.r.$r)
             })
         }
 
@@ -418,7 +431,21 @@ impl Cpu {
             0x7d => ld_r_r!(a, l), // LD A, L
             0x7e => ld_r_hl!(a), // LD A, (HL)
             0x7f => ld_r_r!(a, a), // LD A, A
-            0x80 => add_r!(b), // ADD A, B
+            0x80 => add_a_r!(b), // ADD A, B
+            0x81 => add_a_r!(c), // ADD A, C
+            0x82 => add_a_r!(d), // ADD A, D
+            0x83 => add_a_r!(e), // ADD A, E
+            0x84 => add_a_r!(h), // ADD A, H
+            0x85 => add_a_r!(l), // ADD A, L
+            0x86 => add_a_helper!(m.rb(self.r.hl())) + 1,
+            0x87 => add_a_r!(a), // ADD A, A
+            0x88 => adc_a_r!(b), // ADC A, B
+            0x89 => adc_a_r!(c), // ADC A, C
+            0x8a => adc_a_r!(d), // ADC A, D
+            0x8b => adc_a_r!(e), // ADC A, E
+            0x8c => adc_a_r!(h), // ADC A, H
+            0x8d => adc_a_r!(l), // ADC A, L
+            0x8e => adc_a_helper!(m.rb(self.r.hl())) + 1,
 
             _ => 0
         };
@@ -1945,40 +1972,498 @@ mod test {
         ld_r_r!(a, a, 0x7f);
     }
 
-    macro_rules! add_r_r_helper {
-        ($r1: ident, $r2: ident, $r1_val: expr, $r2_val: expr, $op: expr, $expected_f: expr) => ({
+    macro_rules! add_a_r_helper {
+        ($r: ident, $a: expr, $r_val: expr, $op: expr, $expected_f: expr) => ({
             let (mut c, mut m) = init();
-            c.r.$r1 = $r1_val;
-            c.r.$r2 = $r2_val;
+            c.r.a = $a;
+            c.r.$r = $r_val;
             op(&mut c, &mut m, $op, 1, 1);
-            assert_eq!(c.r.$r1, $r1_val + $r2_val);
+            assert_eq!(c.r.a, ($a as u16 + $r_val as u16) as u8);
             assert_eq!(c.r.f, $expected_f);
         })
     }
 
-    macro_rules! add_r_r {
-        ($r1: ident, $r2: ident) => ({
-            add_r_r_helper!($r1, $r2, 0x12, 0x34, 0x80, 0x00);
+    macro_rules! add_a_r {
+        ($r: ident, $op: expr) => ({
+            add_a_r_helper!($r, 0x12, 0x34, $op, 0x00);
         })
     }
 
-    /*
-    macro_rules! add_r_r_zero {
-        
+    macro_rules! add_a_r_zero {
+        ($r: ident, $op: expr) => ({
+            add_a_r_helper!($r, 0xf0, 0x10, $op, Z | C);
+        })
     }
-    */
 
-    /*
+    macro_rules! add_a_r_carry {
+        ($r: ident, $op: expr) => ({
+            add_a_r_helper!($r, 0xff, 0x02, $op, H | C);
+        })
+    }
+
+    macro_rules! add_a_r_half_carry {
+        ($r: ident, $op: expr) => ({
+            add_a_r_helper!($r, 0x0f, 0x11, $op, H);
+        })
+    }
+
+    macro_rules! add_a_r_only_carry {
+        ($r: ident, $op: expr) => ({
+            add_a_r_helper!($r, 0xf0, 0x20, $op, C);
+        })
+    }
+
     #[test]
     fn add_a_b() {
-        let (mut c, mut m) = init();
-        c.r.a = 0x02;
-        c.r.b = 0x01;
-        c.r.f = 0x80 | 0x40 | 0x20 | 0x10;
-        op(&mut c, &mut m, 0x80, 1, 1);
-        assert_eq!(c.r.a, 0x03);
-        assert_eq!(c.r.f, 0x00);
-        // TODO: Check all flags
+        add_a_r!(b, 0x80);
     }
-    */
+
+    #[test]
+    fn add_a_b_zero() {
+        add_a_r_zero!(b, 0x80);
+    }
+
+    #[test]
+    fn add_a_b_carry() {
+        add_a_r_carry!(b, 0x80);
+    }
+
+    #[test]
+    fn add_a_b_half_carry() {
+        add_a_r_half_carry!(b, 0x80);
+    }
+
+    #[test]
+    fn add_a_b_only_carry() {
+        add_a_r_only_carry!(b, 0x80);
+    }
+
+    #[test]
+    fn add_a_c() {
+        add_a_r!(c, 0x81);
+    }
+
+    #[test]
+    fn add_a_c_zero() {
+        add_a_r_zero!(c, 0x81);
+    }
+
+    #[test]
+    fn add_a_c_carry() {
+        add_a_r_carry!(c, 0x81);
+    }
+
+    #[test]
+    fn add_a_c_half_carry() {
+        add_a_r_half_carry!(c, 0x81);
+    }
+
+    #[test]
+    fn add_a_c_only_carry() {
+        add_a_r_only_carry!(c, 0x81);
+    }
+
+    #[test]
+    fn add_a_d() {
+        add_a_r!(d, 0x82);
+    }
+
+    #[test]
+    fn add_a_d_zero() {
+        add_a_r_zero!(d, 0x82);
+    }
+
+    #[test]
+    fn add_a_d_carry() {
+        add_a_r_carry!(d, 0x82);
+    }
+
+    #[test]
+    fn add_a_d_half_carry() {
+        add_a_r_half_carry!(d, 0x82);
+    }
+
+    #[test]
+    fn add_a_d_only_carry() {
+        add_a_r_only_carry!(d, 0x82);
+    }
+
+    #[test]
+    fn add_a_e() {
+        add_a_r!(e, 0x83);
+    }
+
+    #[test]
+    fn add_a_e_zero() {
+        add_a_r_zero!(e, 0x83);
+    }
+
+    #[test]
+    fn add_a_e_carry() {
+        add_a_r_carry!(e, 0x83);
+    }
+
+    #[test]
+    fn add_a_e_half_carry() {
+        add_a_r_half_carry!(e, 0x83);
+    }
+
+    #[test]
+    fn add_a_e_only_carry() {
+        add_a_r_only_carry!(e, 0x83);
+    }
+
+    #[test]
+    fn add_a_h() {
+        add_a_r!(h, 0x84);
+    }
+
+    #[test]
+    fn add_a_h_zero() {
+        add_a_r_zero!(h, 0x84);
+    }
+
+    #[test]
+    fn add_a_h_carry() {
+        add_a_r_carry!(h, 0x84);
+    }
+
+    #[test]
+    fn add_a_h_half_carry() {
+        add_a_r_half_carry!(h, 0x84);
+    }
+
+    #[test]
+    fn add_a_h_only_carry() {
+        add_a_r_only_carry!(h, 0x84);
+    }
+
+    #[test]
+    fn add_a_l() {
+        add_a_r!(l, 0x85);
+    }
+
+    #[test]
+    fn add_a_l_zero() {
+        add_a_r_zero!(l, 0x85);
+    }
+
+    #[test]
+    fn add_a_l_carry() {
+        add_a_r_carry!(l, 0x85);
+    }
+
+    #[test]
+    fn add_a_l_half_carry() {
+        add_a_r_half_carry!(l, 0x85);
+    }
+
+    #[test]
+    fn add_a_l_only_carry() {
+        add_a_r_only_carry!(l, 0x85);
+    }
+
+    macro_rules! add_a_hl_helper {
+        ($a: expr, $h: expr, $l: expr, $val: expr, $expected_f: expr) => ({
+            let (mut c, mut m) = init();
+            c.r.a = $a;
+            c.r.h = $h;
+            c.r.l = $l;
+            m.wb(c.r.hl(), $val);
+            op(&mut c, &mut m, 0x86, 1, 2);
+            assert_eq!(c.r.a, ($a + $val) as u8);
+            assert_eq!(c.r.f, $expected_f);
+        })
+    }
+
+    #[test]
+    fn add_a_hl() {
+        add_a_hl_helper!(0x12, 0xd0, 0x00, 0x34, 0x00);
+    }
+
+    #[test]
+    fn add_a_hl_zero() {
+        add_a_hl_helper!(0xff, 0xd0, 0x00, 0x01, Z | H | C);
+    }
+
+    #[test]
+    fn add_a_hl_carry() {
+        add_a_hl_helper!(0xff, 0xd0, 0x00, 0x02, H | C);
+    }
+
+    #[test]
+    fn add_a_hl_half_carry() {
+        add_a_hl_helper!(0x1f, 0xd0, 0x00, 0x01, H);
+    }
+
+    #[test]
+    fn add_a_hl_only_carry() {
+        add_a_hl_helper!(0xf2, 0xd0, 0x00, 0x14, C);
+    }
+
+    macro_rules! add_a_a_helper {
+        ($a: expr, $expected_f: expr) => ({
+            let (mut c, mut m) = init();
+            c.r.a = $a;
+            op(&mut c, &mut m, 0x87, 1, 1);
+            assert_eq!(c.r.a, ($a as u16 + $a as u16) as u8);
+            assert_eq!(c.r.f, $expected_f);
+        })
+    }
+
+    #[test]
+    fn add_a_a() {
+        add_a_a_helper!(0x12, 0x00);
+    }
+
+    #[test]
+    fn add_a_a_zero() {
+        add_a_a_helper!(0x80, Z | C);
+    }
+
+    #[test]
+    fn add_a_a_carry() {
+        add_a_a_helper!(0xf8, H | C);
+    }
+
+    #[test]
+    fn add_a_a_half_carry() {
+        add_a_a_helper!(0x08, H);
+    }
+
+    #[test]
+    fn add_a_a_only_carry() {
+        add_a_a_helper!(0x90, C);
+    }
+
+    macro_rules! adc_a_r_helper {
+        ($a: expr, $r: ident, $r_val: expr, $op: expr, $expected_f: expr) => ({
+            let (mut c, mut m) = init();
+            c.r.a = $a;
+            c.r.$r = $r_val;
+            c.r.f = C;
+            op(&mut c, &mut m, $op, 1, 1);
+            assert_eq!(c.r.a, ($a as u16 + $r_val as u16 + 0x1) as u8);
+            assert_eq!(c.r.f, $expected_f);
+        })
+    }
+
+    macro_rules! adc_a_r {
+        ($r: ident, $op: expr) => ({
+            adc_a_r_helper!(0x12, $r, 0x34, $op, 0x00);
+        })
+    }
+
+    macro_rules! adc_a_r_zero {
+        ($r: ident, $op: expr) => ({
+            adc_a_r_helper!(0xf0, $r, 0x0f, $op, Z | H | C);
+        })
+    }
+
+    macro_rules! adc_a_r_carry {
+        ($r: ident, $op: expr) => ({
+            adc_a_r_helper!(0xf2, $r, 0x1f, $op, H | C);
+        })
+    }
+
+    macro_rules! adc_a_r_half_carry {
+        ($r: ident, $op: expr) => ({
+            adc_a_r_helper!(0x1f, $r, 0x34, $op, H);
+        })
+    }
+
+    macro_rules! adc_a_r_only_carry {
+        ($r: ident, $op: expr) => ({
+            adc_a_r_helper!(0xf2, $r, 0x34, $op, C);
+        })
+    }
+
+    #[test]
+    fn adc_a_b() {
+        adc_a_r!(b, 0x88);
+    }
+
+    #[test]
+    fn adc_a_b_zero() {
+        adc_a_r_zero!(b, 0x88);
+    }
+
+    #[test]
+    fn adc_a_b_carry() {
+        adc_a_r_carry!(b, 0x88);
+    }
+
+    #[test]
+    fn adc_a_b_half_carry() {
+        adc_a_r_half_carry!(b, 0x88);
+    }
+
+    #[test]
+    fn adc_a_b_only_carry() {
+        adc_a_r_only_carry!(b, 0x88);
+    }
+
+    #[test]
+    fn adc_a_c() {
+        adc_a_r!(c, 0x89);
+    }
+
+    #[test]
+    fn adc_a_c_zero() {
+        adc_a_r_zero!(c, 0x89);
+    }
+
+    #[test]
+    fn adc_a_c_carry() {
+        adc_a_r_carry!(c, 0x89);
+    }
+
+    #[test]
+    fn adc_a_c_half_carry() {
+        adc_a_r_half_carry!(c, 0x89);
+    }
+
+    #[test]
+    fn adc_a_c_only_carry() {
+        adc_a_r_only_carry!(c, 0x89);
+    }
+
+    #[test]
+    fn adc_a_d() {
+        adc_a_r!(d, 0x8a);
+    }
+
+    #[test]
+    fn adc_a_d_zero() {
+        adc_a_r_zero!(d, 0x8a);
+    }
+
+    #[test]
+    fn adc_a_d_carry() {
+        adc_a_r_carry!(d, 0x8a);
+    }
+
+    #[test]
+    fn adc_a_d_half_carry() {
+        adc_a_r_half_carry!(d, 0x8a);
+    }
+
+    #[test]
+    fn adc_a_d_only_carry() {
+        adc_a_r_only_carry!(d, 0x8a);
+    }
+
+    #[test]
+    fn adc_a_e() {
+        adc_a_r!(e, 0x8b);
+    }
+
+    #[test]
+    fn adc_a_e_zero() {
+        adc_a_r_zero!(e, 0x8b);
+    }
+
+    #[test]
+    fn adc_a_e_carry() {
+        adc_a_r_carry!(e, 0x8b);
+    }
+
+    #[test]
+    fn adc_a_e_half_carry() {
+        adc_a_r_half_carry!(e, 0x8b);
+    }
+
+    #[test]
+    fn adc_a_e_only_carry() {
+        adc_a_r_only_carry!(e, 0x8b);
+    }
+
+    #[test]
+    fn adc_a_h() {
+        adc_a_r!(h, 0x8c);
+    }
+
+    #[test]
+    fn adc_a_h_zero() {
+        adc_a_r_zero!(h, 0x8c);
+    }
+
+    #[test]
+    fn adc_a_h_carry() {
+        adc_a_r_carry!(h, 0x8c);
+    }
+
+    #[test]
+    fn adc_a_h_half_carry() {
+        adc_a_r_half_carry!(h, 0x8c);
+    }
+
+    #[test]
+    fn adc_a_h_only_carry() {
+        adc_a_r_only_carry!(h, 0x8c);
+    }
+
+    #[test]
+    fn adc_a_l() {
+        adc_a_r!(l, 0x8d);
+    }
+
+    #[test]
+    fn adc_a_l_zero() {
+        adc_a_r_zero!(l, 0x8d);
+    }
+
+    #[test]
+    fn adc_a_l_carry() {
+        adc_a_r_carry!(l, 0x8d);
+    }
+
+    #[test]
+    fn adc_a_l_half_carry() {
+        adc_a_r_half_carry!(l, 0x8d);
+    }
+
+    #[test]
+    fn adc_a_l_only_carry() {
+        adc_a_r_only_carry!(l, 0x8d);
+    }
+
+    macro_rules! adc_a_hl_helper {
+        ($a: expr, $h: expr, $l: expr, $val: expr, $expected_f: expr) => ({
+            let (mut c, mut m) = init();
+            c.r.a = $a;
+            c.r.h = $h;
+            c.r.l = $l;
+            m.wb(c.r.hl(), $val);
+            c.r.f = C;
+            op(&mut c, &mut m, 0x8e, 1, 2);
+            assert_eq!(c.r.a, ($a as u16 + $val as u16 + 0x01) as u8);
+            assert_eq!(c.r.f, $expected_f);
+        })
+    }
+
+    #[test]
+    fn adc_a_hl() {
+        adc_a_hl_helper!(0x12, 0xd0, 0x00, 0x34, 0x00);
+    }
+
+    #[test]
+    fn adc_a_hl_zero() {
+        adc_a_hl_helper!(0x80, 0xd0, 0x00, 0x7f, Z | H | C);
+    }
+
+    #[test]
+    fn adc_a_hl_carry() {
+        adc_a_hl_helper!(0xff, 0xd0, 0x00, 0x02, H | C);
+    }
+
+    #[test]
+    fn adc_a_hl_half_carry() {
+        adc_a_hl_helper!(0x1f, 0xd0, 0x00, 0x39, H);
+    }
+
+    #[test]
+    fn adc_a_hl_only_carry() {
+        adc_a_hl_helper!(0xf2, 0xd0, 0x00, 0x34, C);
+    }
 }
