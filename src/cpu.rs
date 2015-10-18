@@ -171,6 +171,24 @@ impl Cpu {
                 }
             })
         }
+        macro_rules! ld_r_r {
+            ($dest: ident, $src: ident) => ({
+                self.r.$dest = self.r.$src;
+                1
+            })
+        }
+        macro_rules! ld_r_hl {
+            ($r: ident) => ({
+                self.r.$r = m.rb(self.r.hl());
+                2
+            })
+        }
+        macro_rules! ld_hl_r {
+            ($r: ident) => ({
+                m.wb(self.r.hl(), self.r.$r);
+                2
+            })
+        }
 
         let m_cycle = match instr {
             0x00 => 1, // NOP
@@ -277,7 +295,8 @@ impl Cpu {
             0x2e => ld_n!(l), // LD L, n
             0x2f => { // CPL
                 self.r.a = !self.r.a;
-                self.r.f = N | H;
+                self.r.f &= Z | C;
+                self.r.f |= N | H;
                 1
             }
             0x30 => jr_e!(self.r.f & C != C), // JR NC, e
@@ -321,6 +340,75 @@ impl Cpu {
             0x37 => { self.r.f &= Z; self.r.f |= C; 1 },
             0x38 => jr_e!(self.r.f & C == C), // JR C, e
             0x39 => add_hl_helper!(self.r.sp), // ADD HL, SP
+            0x3a => { self.r.a = m.rb(self.r.hl()); dec_ss!(h, l) } // LDD A, (HL)
+            0x3b => { self.r.sp -= 1; 2 }, // DEC SP
+            0x3c => inc!(a), // INC A
+            0x3d => dec!(a), // DEC A
+            0x3e => ld_n!(a), // LD A, n
+            0x3f => { // CCF
+                self.r.f &= !(N | H);
+                if self.r.f & C == C {
+                    self.r.f &= !C
+                } else {
+                    self.r.f |= C
+                }
+                1
+            }
+            0x40 => ld_r_r!(b, b), // LD B, B
+            0x41 => ld_r_r!(b, c), // LD B, C
+            0x42 => ld_r_r!(b, d), // LD B, D
+            0x43 => ld_r_r!(b, e), // LD B, E
+            0x44 => ld_r_r!(b, h), // LD B, H
+            0x45 => ld_r_r!(b, l), // LD B, L
+            0x46 => ld_r_hl!(b), // LD B, (HL)
+            0x47 => ld_r_r!(b, a), // LD B, A
+            0x48 => ld_r_r!(c, b), // LD C, B
+            0x49 => ld_r_r!(c, c), // LD C, C
+            0x4a => ld_r_r!(c, d), // LD C, D
+            0x4b => ld_r_r!(c, e), // LD C, E
+            0x4c => ld_r_r!(c, h), // LD C, H
+            0x4d => ld_r_r!(c, l), // LD C, L
+            0x4e => ld_r_hl!(c), // LD C, (HL)
+            0x4f => ld_r_r!(c, a), // LD C, A
+            0x50 => ld_r_r!(d, b), // LD D, B
+            0x51 => ld_r_r!(d, c), // LD D, C
+            0x52 => ld_r_r!(d, d), // LD D, D
+            0x53 => ld_r_r!(d, e), // LD D, E
+            0x54 => ld_r_r!(d, h), // LD D, H
+            0x55 => ld_r_r!(d, l), // LD D, L
+            0x56 => ld_r_hl!(d), // LD D, (HL)
+            0x57 => ld_r_r!(d, a), // LD D, A
+            0x58 => ld_r_r!(e, b), // LD E, B
+            0x59 => ld_r_r!(e, c), // LD E, C
+            0x5a => ld_r_r!(e, d), // LD E, D
+            0x5b => ld_r_r!(e, e), // LD E, E
+            0x5c => ld_r_r!(e, h), // LD E, H
+            0x5d => ld_r_r!(e, l), // LD E, L
+            0x5e => ld_r_hl!(e), // LD E, (HL)
+            0x5f => ld_r_r!(e, a), // LD E, A
+            0x60 => ld_r_r!(h, b), // LD H, B
+            0x61 => ld_r_r!(h, c), // LD H, C
+            0x62 => ld_r_r!(h, d), // LD H, D
+            0x63 => ld_r_r!(h, e), // LD H, E
+            0x64 => ld_r_r!(h, h), // LD H, H
+            0x65 => ld_r_r!(h, l), // LD H, L
+            0x66 => ld_r_hl!(h), // LD H, (HL)
+            0x67 => ld_r_r!(h, a), // LD H, A
+            0x68 => ld_r_r!(l, b), // LD L, B
+            0x69 => ld_r_r!(l, c), // LD L, C
+            0x6a => ld_r_r!(l, d), // LD L, D
+            0x6b => ld_r_r!(l, e), // LD L, E
+            0x6c => ld_r_r!(l, h), // LD L, H
+            0x6d => ld_r_r!(l, l), // LD L, L
+            0x6e => ld_r_hl!(l), // LD L, (HL)
+            0x6f => ld_r_r!(l, a), // LD L, A
+            0x70 => ld_hl_r!(b), // LD (HL), B
+            0x71 => ld_hl_r!(c), // LD (HL), C
+            0x72 => ld_hl_r!(d), // LD (HL), D
+            0x73 => ld_hl_r!(e), // LD (HL), E
+            0x74 => ld_hl_r!(h), // LD (HL), H
+            0x75 => ld_hl_r!(l), // LD (HL), L
+            0x76 => { 1 } // TODO: HALT
             0x80 => add_r!(b), // ADD A, B
 
             _ => 0
@@ -1232,6 +1320,78 @@ mod test {
     }
 
     #[test]
+    fn ldi_a_hl() {
+        let (mut c, mut m) = init();
+        c.r.h = 0xc0;
+        c.r.l = 0xff;
+        m.wb(0xc0ff, 0x12);
+        op(&mut c, &mut m, 0x2a, 1, 2);
+        assert_eq!(c.r.a, 0x12);
+        assert_eq!(c.r.h, 0xc1);
+        assert_eq!(c.r.l, 0x00);
+    }
+
+    #[test]
+    fn dec_hl() {
+        dec_rr!(h, l, 0x2b);
+    }
+
+    #[test]
+    fn dec_hl_half_carry() {
+        dec_rr_half_carry!(h, l, 0x2b);
+    }
+
+    #[test]
+    fn dec_hl_underflow() {
+        dec_rr_underflow!(h, l, 0x2b);
+    }
+
+    #[test]
+    fn inc_l() {
+        inc_r!(l, 0x2c);
+    }
+
+    #[test]
+    fn inc_l_half_carry() {
+        inc_r_half_carry!(l, 0x2c);
+    }
+
+    #[test]
+    fn inc_l_zero() {
+        inc_r_zero!(l, 0x2c);
+    }
+
+    #[test]
+    fn dec_l() {
+        dec_r!(l, 0x2d);
+    }
+
+    #[test]
+    fn dec_l_half_carry() {
+        dec_r_half_carry!(l, 0x2d);
+    }
+
+    #[test]
+    fn dec_l_underflow() {
+        dec_r_half_carry!(l, 0x2d);
+    }
+
+    #[test]
+    fn ld_l_n() {
+        ld_r_n!(l, 0x2e);
+    }
+
+    #[test]
+    fn cpl() {
+        let (mut c, mut m) = init();
+        c.r.a = 0b01101010;
+        c.r.f = Z | C;
+        op(&mut c, &mut m, 0x2f, 1, 1);
+        assert_eq!(c.r.a, 0b10010101);
+        assert_eq!(c.r.f, Z | N | H | C);
+    }
+
+    #[test]
     fn ld_sp_nn() {
         let (mut c, mut m) = init();
         m.ww(c.r.pc + 1, 0x1234);
@@ -1340,6 +1500,395 @@ mod test {
     #[test]
     fn add_hl_sp_only_carry() {
         add_hl_sp_helper(0x82, 0x00, 0x8000, 0x02, 0x00, C);
+    }
+
+    #[test]
+    fn ldd_a_hl() {
+        let (mut c, mut m) = init();
+        c.r.h = 0xd0;
+        c.r.l = 0x00;
+        m.wb(0xd000, 0x12);
+        op(&mut c, &mut m, 0x3a, 1, 2);
+        assert_eq!(c.r.a, 0x12);
+        assert_eq!(c.r.h, 0xcf);
+        assert_eq!(c.r.l, 0xff);
+    }
+
+    #[test]
+    fn dec_sp() {
+        let (mut c, mut m) = init();
+        c.r.sp = 0x1234;
+        op(&mut c, &mut m, 0x3b, 1, 2);
+        assert_eq!(c.r.sp, 0x1233);
+        assert_eq!(c.r.f, 0x00);
+    }
+
+    #[test]
+    fn inc_a() {
+        inc_r!(a, 0x3c);
+    }
+
+    #[test]
+    fn inc_a_half_carry() {
+        inc_r_half_carry!(a, 0x3c);
+    }
+
+    #[test]
+    fn inc_a_zero() {
+        inc_r_zero!(a, 0x3c);
+    }
+
+    #[test]
+    fn dec_a() {
+        dec_r!(a, 0x3d);
+    }
+
+    #[test]
+    fn dec_a_half_carry() {
+        dec_r_half_carry!(a, 0x3d);
+    }
+
+    #[test]
+    fn dec_a_underflow() {
+        dec_r_half_carry!(a, 0x3d);
+    }
+
+    #[test]
+    fn ld_a_n() {
+        ld_r_n!(a, 0x3e);
+    }
+
+    macro_rules! ccf {
+        ($c: expr, $expected_c: expr) => ({
+            let (mut c, mut m) = init();
+            c.r.f = Z | N | H | $c;
+            op(&mut c, &mut m, 0x3f, 1, 1);
+            assert_eq!(c.r.f, Z | $expected_c);
+        })
+    }
+
+    #[test]
+    fn ccf() {
+        ccf!(0x00, C);
+    }
+
+    #[test]
+    fn ccf_reset() {
+        ccf!(C, 0x00);
+    }
+
+    macro_rules! ld_r_r {
+        ($dest: ident, $src: ident, $op: expr) => ({
+            let (mut c, mut m) = init();
+            c.r.$src = 0x12;
+            op(&mut c, &mut m, $op, 1, 1);
+            assert_eq!(c.r.$dest, 0x12);
+        })
+    }
+
+    macro_rules! ld_r_hl {
+        ($r: ident, $op: expr) => ({
+            let (mut c, mut m) = init();
+            c.r.h = 0xd0;
+            c.r.l = 0x00;
+            m.wb(0xd000, 0x12);
+            op(&mut c, &mut m, $op, 1, 2);
+            assert_eq!(c.r.$r, 0x12);
+        })
+    }
+
+    #[test]
+    fn ld_b_b() {
+        ld_r_r!(b, b, 0x40);
+    }
+
+    #[test]
+    fn ld_b_c() {
+        ld_r_r!(b, c, 0x41);
+    }
+
+    #[test]
+    fn ld_b_d() {
+        ld_r_r!(b, d, 0x42);
+    }
+
+    #[test]
+    fn ld_b_e() {
+        ld_r_r!(b, e, 0x43);
+    }
+
+    #[test]
+    fn ld_b_h() {
+        ld_r_r!(b, h, 0x44);
+    }
+
+    #[test]
+    fn ld_b_l() {
+        ld_r_r!(b, l, 0x45);
+    }
+
+    #[test]
+    fn ld_b_hl() {
+        ld_r_hl!(b, 0x46);
+    }
+
+    #[test]
+    fn ld_b_a() {
+        ld_r_r!(b, a, 0x47);
+    }
+
+    #[test]
+    fn ld_c_b() {
+        ld_r_r!(c, b, 0x48);
+    }
+
+    #[test]
+    fn ld_c_c() {
+        ld_r_r!(c, c, 0x49);
+    }
+
+    #[test]
+    fn ld_c_d() {
+        ld_r_r!(c, d, 0x4a);
+    }
+
+    #[test]
+    fn ld_c_e() {
+        ld_r_r!(c, e, 0x4b);
+    }
+
+    #[test]
+    fn ld_c_h() {
+        ld_r_r!(c, h, 0x4c);
+    }
+
+    #[test]
+    fn ld_c_l() {
+        ld_r_r!(c, l, 0x4d);
+    }
+
+    #[test]
+    fn ld_c_hl() {
+        ld_r_hl!(c, 0x4e);
+    }
+
+    #[test]
+    fn ld_c_a() {
+        ld_r_r!(c, a, 0x4f);
+    }
+
+    #[test]
+    fn ld_d_b() {
+        ld_r_r!(d, b, 0x50);
+    }
+
+    #[test]
+    fn ld_d_c() {
+        ld_r_r!(d, c, 0x51);
+    }
+
+    #[test]
+    fn ld_d_d() {
+        ld_r_r!(d, d, 0x52);
+    }
+
+    #[test]
+    fn ld_d_e() {
+        ld_r_r!(d, e, 0x53);
+    }
+
+    #[test]
+    fn ld_d_h() {
+        ld_r_r!(d, h, 0x54);
+    }
+
+    #[test]
+    fn ld_d_l() {
+        ld_r_r!(d, l, 0x55);
+    }
+
+    #[test]
+    fn ld_d_hl() {
+        ld_r_hl!(d, 0x56);
+    }
+
+    #[test]
+    fn ld_d_a() {
+        ld_r_r!(d, a, 0x57);
+    }
+
+    #[test]
+    fn ld_e_b() {
+        ld_r_r!(e, b, 0x58);
+    }
+
+    #[test]
+    fn ld_e_c() {
+        ld_r_r!(e, c, 0x59);
+    }
+
+    #[test]
+    fn ld_e_d() {
+        ld_r_r!(e, d, 0x5a);
+    }
+
+    #[test]
+    fn ld_e_e() {
+        ld_r_r!(e, e, 0x5b);
+    }
+
+    #[test]
+    fn ld_e_h() {
+        ld_r_r!(e, h, 0x5c);
+    }
+
+    #[test]
+    fn ld_e_l() {
+        ld_r_r!(e, l, 0x5d);
+    }
+
+    #[test]
+    fn ld_e_hl() {
+        ld_r_hl!(e, 0x5e);
+    }
+
+    #[test]
+    fn ld_e_a() {
+        ld_r_r!(e, a, 0x5f);
+    }
+
+    #[test]
+    fn ld_h_b() {
+        ld_r_r!(h, b, 0x60);
+    }
+
+    #[test]
+    fn ld_h_c() {
+        ld_r_r!(h, c, 0x61);
+    }
+
+    #[test]
+    fn ld_h_d() {
+        ld_r_r!(h, d, 0x62);
+    }
+
+    #[test]
+    fn ld_h_e() {
+        ld_r_r!(h, e, 0x63);
+    }
+
+    #[test]
+    fn ld_h_h() {
+        ld_r_r!(h, h, 0x64);
+    }
+
+    #[test]
+    fn ld_h_l() {
+        ld_r_r!(h, l, 0x65);
+    }
+
+    #[test]
+    fn ld_h_hl() {
+        ld_r_hl!(h, 0x66);
+    }
+
+    #[test]
+    fn ld_h_a() {
+        ld_r_r!(h, a, 0x67);
+    }
+
+    #[test]
+    fn ld_l_b() {
+        ld_r_r!(l, b, 0x68);
+    }
+
+    #[test]
+    fn ld_l_c() {
+        ld_r_r!(l, c, 0x69);
+    }
+
+    #[test]
+    fn ld_l_d() {
+        ld_r_r!(l, d, 0x6a);
+    }
+
+    #[test]
+    fn ld_l_e() {
+        ld_r_r!(l, e, 0x6b);
+    }
+
+    #[test]
+    fn ld_l_h() {
+        ld_r_r!(l, h, 0x6c);
+    }
+
+    #[test]
+    fn ld_l_l() {
+        ld_r_r!(l, l, 0x6d);
+    }
+
+    #[test]
+    fn ld_l_hl() {
+        ld_r_hl!(l, 0x6e);
+    }
+
+    #[test]
+    fn ld_l_a() {
+        ld_r_r!(l, a, 0x6f);
+    }
+
+    macro_rules! ld_hl_r {
+        ($r: ident, $op: expr) => ({
+            let (mut c, mut m) = init();
+            c.r.h = 0xd0;
+            c.r.l = 0x00;
+            c.r.$r = 0x12;
+            op(&mut c, &mut m, $op, 1, 2);
+            assert_eq!(m.rb(0xd000), 0x12);
+        })
+    }
+
+    #[test]
+    fn ld_hl_b() {
+        ld_hl_r!(b, 0x70);
+    }
+
+    #[test]
+    fn ld_hl_c() {
+        ld_hl_r!(c, 0x71);
+    }
+
+    #[test]
+    fn ld_hl_d() {
+        ld_hl_r!(d, 0x72);
+    }
+
+    #[test]
+    fn ld_hl_e() {
+        ld_hl_r!(e, 0x73);
+    }
+
+    #[test]
+    fn ld_hl_h() {
+        let (mut c, mut m) = init();
+        c.r.h = 0xd0;
+        c.r.l = 0x12;
+        op(&mut c, &mut m, 0x74, 1, 2);
+        assert_eq!(m.rb(0xd012), 0xd0);
+    }
+
+    #[test]
+    fn ld_hl_l() {
+        let (mut c, mut m) = init();
+        c.r.h = 0xd0;
+        c.r.l = 0x12;
+        op(&mut c, &mut m, 0x75, 1, 2);
+        assert_eq!(m.rb(0xd012), 0x12);
+    }
+
+    #[test]
+    fn halt() {
+        // TODO
     }
 
     /*
