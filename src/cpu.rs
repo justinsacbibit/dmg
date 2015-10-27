@@ -1,11 +1,6 @@
 use super::mmu::Mmu;
+use super::registers::{Z, N, H, C};
 use super::registers::Registers;
-
-// The following are the four flags set by certain arithmetic operations
-const Z: u8 = 0x80; // Zero: Set if the result is zero.
-const N: u8 = 0x40; // Operation: Set if the last operation was a subtraction.
-const H: u8 = 0x20; // Half-carry: Set if there was carry from the low nibble to the high. In the high byte for 16 bit operations.
-const C: u8 = 0x10; // Carry: Set if last options overflowed or underflowed.
 
 pub struct Cpu {
     // Clock
@@ -50,7 +45,7 @@ impl Cpu {
     }
 
     // TODO: Test
-    fn op_daa(&mut self, m: &mut Mmu) -> u32 {
+    fn op_daa(&mut self) -> u32 {
         let mut a = self.r.a as u16;
         if self.r.f & N != N {
             if self.r.f & H == H || (a & 0xf) > 0x9 {
@@ -78,6 +73,513 @@ impl Cpu {
         1
     }
 
+    fn exec_cb_instr(&mut self, instr: u8, m: &mut Mmu) -> u32 {
+        macro_rules! hl {
+            ($op: ident) => ({
+                let val = m.rb(self.r.hl());
+                let new_val = $op!(val);
+                m.wb(self.r.hl(), new_val);
+                4
+            })
+        }
+
+        macro_rules! r {
+            ($reg: ident, $op: ident) => ({
+                self.r.$reg = $op!(self.r.$reg);
+                2
+            })
+        }
+
+        // RLC val
+        // Rotate val left. Old bit 7 to carry flag.
+        // val = expr
+        // Flags: Z 0 0 C
+        macro_rules! rlc_val {
+            ($val: expr) => ({
+                let carry = if $val & 0x80 == 0x80 { 0x01 } else { 0x00 };
+                self.r.f = carry << 4;
+                let new_val = ($val << 1) | carry;
+                if new_val == 0x00 { self.r.f |= Z; }
+                new_val
+            })
+        }
+
+        // RLC r
+        // Rotate r left. Old bit 7 to carry flag.
+        // r = A, B, C, D, E, H, L
+        // Flags: Z 0 0 C
+        macro_rules! rlc_r {
+            ($reg: ident) => ({
+                r!($reg, rlc_val)
+            })
+        }
+
+        // RLC (HL)
+        // Rotate (HL) left. Old bit 7 to carry flag.
+        // Flags: Z 0 0 C
+        macro_rules! rlc_hl {
+            () => ({
+                hl!(rlc_val)
+            })
+        }
+
+        // RRC val
+        // Rotate val right. Old bit 0 to carry flag.
+        // val = expr
+        // Flags: Z 0 0 C
+        macro_rules! rrc_val {
+            ($val: expr) => ({
+                let carry = if $val & 0x1 == 0x1 { 0x1 } else { 0x0 };
+                self.r.f = carry << 4;
+                let new_val = ($val >> 1) | (carry << 7);
+                if new_val == 0x00 { self.r.f |= Z; }
+                new_val
+            })
+        }
+
+        // RRC r
+        // Rotate r right. Old bit 0 to carry flag.
+        // r = A, B, C, D, E, H, L
+        // Flags: Z 0 0 C
+        macro_rules! rrc_r {
+            ($reg: ident) => ({
+                r!($reg, rrc_val)
+            })
+        }
+
+        // RRC (HL)
+        // Rotate (HL) right. Old bit 0 to carry flag.
+        // Flags: Z 0 0 C
+        macro_rules! rrc_hl {
+            () => ({
+                hl!(rrc_val)
+            })
+        }
+
+        // RL val
+        // Rotate val left through carry flag.
+        // val = expr
+        // Flags: Z 0 0 C
+        macro_rules! rl_val {
+            ($val: expr) => ({
+                self.r.f &= C;
+                let carry = if $val & 0x80 == 0x80 { C } else { 0x0 };
+                let new_val = ($val << 1) | if self.r.f == C { 0x1 } else { 0x0 };
+                self.r.f = carry;
+                if new_val == 0x00 { self.r.f |= Z; }
+                new_val
+            })
+        }
+
+        // RL r
+        // Rotate r left through carry flag.
+        // r = A, B, C, D, E, H, L
+        // Flags: Z 0 0 C
+        macro_rules! rl_r {
+            ($reg: ident) => ({
+                r!($reg, rl_val)
+            })
+        }
+
+        // RL (HL)
+        // Rotate (HL) left through carry flag.
+        // Flags: Z 0 0 C
+        macro_rules! rl_hl {
+            () => ({
+                hl!(rl_val)
+            })
+        }
+
+        // RR val
+        // Rotate val right through carry flag.
+        // val = expr
+        // Flags: Z 0 0 C
+        macro_rules! rr_val {
+            ($val: expr) => ({
+                self.r.f &= C;
+                let carry = if $val & 0x1 == 0x1 { C } else { 0x0 };
+                let new_val = ($val >> 1) | if self.r.f == C { 0x80 } else { 0x0 };
+                self.r.f = carry;
+                if new_val == 0x00 { self.r.f |= Z; }
+                new_val
+            })
+        }
+
+        // RR r
+        // Rotate r right through carry flag.
+        // r = A, B, C, D, E, H, L
+        // Flags: Z 0 0 C
+        macro_rules! rr_r {
+            ($reg: ident) => ({
+                r!($reg, rr_val)
+            })
+        }
+
+        // RR (HL)
+        // Rotate (HL) left through carry flag.
+        // Flags: Z 0 0 C
+        macro_rules! rr_hl {
+            () => ({
+                hl!(rr_val)
+            })
+        }
+
+        // SLA val
+        // Shift val left into carry. LSB of val set to 0
+        // val = expr
+        // Flags: Z 0 0 C
+        macro_rules! sla_val {
+            ($val: expr) => ({
+                self.r.f = if $val & 0x80 == 0x80 { C } else { 0x00 };
+                let new_val = $val << 1;
+                if new_val == 0x00 { self.r.f |= Z; }
+                new_val
+            })
+        }
+
+        // SLA r
+        // Shift r left into carry. LSB of r set to 0
+        // r = A, B, C, D, E, H, L
+        // Flags: Z 0 0 C
+        macro_rules! sla_r {
+            ($reg: ident) => ({
+                r!($reg, sla_val)
+            })
+        }
+
+        // SLA (HL)
+        // Shift (HL) left into carry. LSB of (HL) set to 0
+        // Flags: Z 0 0 C
+        macro_rules! sla_hl {
+            () => ({
+                hl!(sla_val)
+            })
+        }
+
+        // SRA val
+        // Shift val right into carry. MSB doesn't change.
+        // val = expr
+        // Flags: Z 0 0 C
+        macro_rules! sra_val {
+            ($val: expr) => ({
+                let msb = $val & 0x80;
+                self.r.f = if $val & 0x01 == 0x01 { C } else { 0x00 };
+                let new_val = $val >> 1 | msb;
+                if new_val == 0 { self.r.f |= Z; }
+                new_val
+            })
+        }
+
+        // SRA r
+        // Shift r right into carry. MSB doesn't change.
+        // r = A, B, C, D, E, H, L
+        // Flags: Z 0 0 C
+        macro_rules! sra_r {
+            ($reg: ident) => ({
+                r!($reg, sra_val)
+            })
+        }
+
+        // SRA (HL)
+        // Shift (HL) right into carry. MSB doesn't change.
+        // Flags: Z 0 0 C
+        macro_rules! sra_hl {
+            () => ({
+                hl!(sra_val)
+            })
+        }
+
+        // SWAP val
+        // Swap upper and lower nibbles of val.
+        // val = expr
+        // Flags: Z 0 0 0
+        macro_rules! swap_val {
+            ($val: expr) => ({
+                self.r.f = if $val == 0x00 { Z } else { 0x00 };
+                $val << 4 | $val >> 4
+            })
+        }
+
+        // SWAP r
+        // Swap upper and lower nibbles of r.
+        // r = A, B, C, D, E, H, L
+        // Flags: Z 0 0 0
+        macro_rules! swap_r {
+            ($reg: ident) => ({
+                r!($reg, swap_val)
+            })
+        }
+
+        // SWAP (HL)
+        // Swap upper and lower nibbles of (HL).
+        // Flags: Z 0 0 0
+        macro_rules! swap_hl {
+            () => ({
+                hl!(swap_val)
+            })
+        }
+
+        // SRL val
+        // Shift val right into carry. MSB set to 0.
+        // val = expr
+        // Flags: Z 0 0 C
+        macro_rules! srl_val {
+            ($val: expr) => ({
+                self.r.f = if $val & 0x01 == 0x01 { C } else { 0x00 };
+                let new_val = $val >> 1;
+                if new_val == 0x00 { self.r.f |= Z; }
+                new_val
+            })
+        }
+
+        // SRL r
+        // Shift r right into carry. MSB set to 0.
+        // r = A, B, C, D, E, H, L
+        // Flags: Z 0 0 C
+        macro_rules! srl_r {
+            ($reg: ident) => ({
+                r!($reg, srl_val)
+            })
+        }
+
+        // SRL (HL)
+        // Shift (HL) right into carry. MSB set to 0.
+        // Flags: Z 0 0 C
+        macro_rules! srl_hl {
+            () => ({
+                hl!(srl_val)
+            })
+        }
+
+        // BIT b, val
+        // Test bit b in val.
+        // b, val = expr
+        // Flags: Z 0 1 -
+        macro_rules! bit_b_val {
+            ($b: expr, $val: expr) => ({
+                self.r.f &= C;
+                self.r.f |= H;
+                if $val & 0x1 << $b == 0x00 { self.r.f |= Z; }
+            })
+        }
+
+        // BIT b, r
+        // Test bit b in r.
+        // b = expr, r = A, B, C, D, E, H L
+        // Flags: Z 0 1 -
+        macro_rules! bit_b_r {
+            ($b: expr, $reg: ident) => ({
+                bit_b_val!($b, self.r.$reg);
+                2
+            })
+        }
+
+        // BIT b, (HL)
+        // Test bit b in (HL).
+        // b = expr
+        // Flags: Z 0 1 -
+        macro_rules! bit_b_hl {
+            ($b: expr) => ({
+                bit_b_val!($b, m.rb(self.r.hl()));
+                4
+            })
+        }
+
+        // RES b, val
+        // Reset bit b in val.
+        // b, val = expr
+        macro_rules! res_b_val {
+            ($b: expr, $val: expr) => ({
+                $val & !(0x01 << $b)
+            })
+        }
+
+        // RES b, r
+        // Reset bit b in r.
+        // b = expr, r = A, B, C, D, E, H L
+        macro_rules! res_b_r {
+            ($b: expr, $reg: ident) => ({
+                self.r.$reg = res_b_val!($b, self.r.$reg);
+                2
+            })
+        }
+
+        // RES b, (HL)
+        // Reset bit b in (HL).
+        // b = expr
+        macro_rules! res_b_hl {
+            ($b: expr) => ({
+                let val = res_b_val!($b, m.rb(self.r.hl()));
+                m.wb(self.r.hl(), val);
+                4
+            })
+        }
+
+        // SET b, val
+        // Set bit b in val.
+        // b, val = expr
+        macro_rules! set_b_val {
+            ($b: expr, $val: expr) => ({
+                $val | 0x01 << $b
+            })
+        }
+
+        // SET b, r
+        // Set bit b in r.
+        // b = expr, r = A, B, C, D, E, H L
+        macro_rules! set_b_r {
+            ($b: expr, $reg: ident) => ({
+                self.r.$reg = set_b_val!($b, self.r.$reg);
+                2
+            })
+        }
+
+        // SET b, (HL)
+        // Set bit b in (HL).
+        // b = expr
+        macro_rules! set_b_hl {
+            ($b: expr) => ({
+                let val = set_b_val!($b, m.rb(self.r.hl()));
+                m.wb(self.r.hl(), val);
+                4
+            })
+        }
+
+        let m_cycle = match instr {
+            0x00 => rlc_r!(b), 0x01 => rlc_r!(c), 0x02 => rlc_r!(d),
+            0x03 => rlc_r!(e), 0x04 => rlc_r!(h), 0x05 => rlc_r!(l),
+            0x06 => rlc_hl!(), 0x07 => rlc_r!(a),
+
+            0x08 => rrc_r!(b), 0x09 => rrc_r!(c), 0x0a => rrc_r!(d),
+            0x0b => rrc_r!(e), 0x0c => rrc_r!(h), 0x0d => rrc_r!(l),
+            0x0e => rrc_r!(b), 0x0f => rrc_r!(a),
+
+            0x10 => rl_r!(b), 0x11 => rl_r!(c), 0x12 => rl_r!(d),
+            0x13 => rl_r!(e), 0x14 => rl_r!(h), 0x15 => rl_r!(l),
+            0x16 => rl_hl!(), 0x17 => rl_r!(a),
+
+            0x18 => rr_r!(b), 0x19 => rr_r!(c), 0x1a => rr_r!(d),
+            0x1b => rr_r!(e), 0x1c => rr_r!(h), 0x1d => rr_r!(l),
+            0x1e => rr_hl!(), 0x1f => rr_r!(a),
+
+            0x20 => sla_r!(b), 0x21 => sla_r!(c), 0x22 => sla_r!(d),
+            0x23 => sla_r!(e), 0x24 => sla_r!(h), 0x25 => sla_r!(l),
+            0x26 => sla_hl!(), 0x27 => sla_r!(a),
+
+            0x28 => sra_r!(b), 0x29 => sra_r!(c), 0x2a => sra_r!(d),
+            0x2b => sra_r!(e), 0x2c => sra_r!(h), 0x2d => sra_r!(l),
+            0x2e => sra_hl!(), 0x2f => sra_r!(a),
+
+            0x30 => swap_r!(b), 0x31 => swap_r!(c), 0x32 => swap_r!(d),
+            0x33 => swap_r!(e), 0x34 => swap_r!(h), 0x35 => swap_r!(l),
+            0x36 => swap_hl!(), 0x37 => swap_r!(a),
+
+            0x38 => srl_r!(b), 0x39 => srl_r!(c), 0x3a => srl_r!(d),
+            0x3b => srl_r!(e), 0x3c => srl_r!(h), 0x3d => srl_r!(l),
+            0x3e => srl_hl!(), 0x3f => srl_r!(a),
+
+            0x40 => bit_b_r!(0, b), 0x41 => bit_b_r!(0, c), 0x42 => bit_b_r!(0, d),
+            0x43 => bit_b_r!(0, e), 0x44 => bit_b_r!(0, h), 0x45 => bit_b_r!(0, l),
+            0x46 => bit_b_hl!(0), 0x47 => bit_b_r!(0, a),
+
+            0x48 => bit_b_r!(1, b), 0x49 => bit_b_r!(1, c), 0x4a => bit_b_r!(1, d),
+            0x4b => bit_b_r!(1, e), 0x4c => bit_b_r!(1, h), 0x4d => bit_b_r!(1, l),
+            0x4e => bit_b_hl!(1), 0x4f => bit_b_r!(1, a),
+
+            0x50 => bit_b_r!(2, b), 0x51 => bit_b_r!(2, c), 0x52 => bit_b_r!(2, d),
+            0x53 => bit_b_r!(2, e), 0x54 => bit_b_r!(2, h), 0x55 => bit_b_r!(2, l),
+            0x56 => bit_b_hl!(2), 0x57 => bit_b_r!(2, a),
+
+            0x58 => bit_b_r!(3, b), 0x59 => bit_b_r!(3, c), 0x5a => bit_b_r!(3, d),
+            0x5b => bit_b_r!(3, e), 0x5c => bit_b_r!(3, h), 0x5d => bit_b_r!(3, l),
+            0x5e => bit_b_hl!(3), 0x5f => bit_b_r!(3, a),
+
+            0x60 => bit_b_r!(4, b), 0x61 => bit_b_r!(4, c), 0x62 => bit_b_r!(4, d),
+            0x63 => bit_b_r!(4, e), 0x64 => bit_b_r!(4, h), 0x65 => bit_b_r!(4, l),
+            0x66 => bit_b_hl!(4), 0x67 => bit_b_r!(4, a),
+
+            0x68 => bit_b_r!(5, b), 0x69 => bit_b_r!(5, c), 0x6a => bit_b_r!(5, d),
+            0x6b => bit_b_r!(5, e), 0x6c => bit_b_r!(5, h), 0x6d => bit_b_r!(5, l),
+            0x6e => bit_b_hl!(5), 0x6f => bit_b_r!(5, a),
+
+            0x70 => bit_b_r!(6, b), 0x71 => bit_b_r!(6, c), 0x72 => bit_b_r!(6, d),
+            0x73 => bit_b_r!(6, e), 0x74 => bit_b_r!(6, h), 0x75 => bit_b_r!(6, l),
+            0x76 => bit_b_hl!(6), 0x77 => bit_b_r!(6, a),
+
+            0x78 => bit_b_r!(7, b), 0x79 => bit_b_r!(7, c), 0x7a => bit_b_r!(7, d),
+            0x7b => bit_b_r!(7, e), 0x7c => bit_b_r!(7, h), 0x7d => bit_b_r!(7, l),
+            0x7e => bit_b_hl!(7), 0x7f => bit_b_r!(7, a),
+
+            0x80 => res_b_r!(0, b), 0x81 => res_b_r!(0, c), 0x82 => res_b_r!(0, d),
+            0x83 => res_b_r!(0, e), 0x84 => res_b_r!(0, h), 0x85 => res_b_r!(0, l),
+            0x86 => res_b_hl!(0), 0x87 => res_b_r!(0, a),
+
+            0x88 => res_b_r!(1, b), 0x89 => res_b_r!(1, c), 0x8a => res_b_r!(1, d),
+            0x8b => res_b_r!(1, e), 0x8c => res_b_r!(1, h), 0x8d => res_b_r!(1, l),
+            0x8e => res_b_hl!(1), 0x8f => res_b_r!(1, a),
+
+            0x90 => res_b_r!(2, b), 0x91 => res_b_r!(2, c), 0x92 => res_b_r!(2, d),
+            0x93 => res_b_r!(2, e), 0x94 => res_b_r!(2, h), 0x95 => res_b_r!(2, l),
+            0x96 => res_b_hl!(2), 0x97 => res_b_r!(2, a),
+
+            0x98 => res_b_r!(3, b), 0x99 => res_b_r!(3, c), 0x9a => res_b_r!(3, d),
+            0x9b => res_b_r!(3, e), 0x9c => res_b_r!(3, h), 0x9d => res_b_r!(3, l),
+            0x9e => res_b_hl!(3), 0x9f => res_b_r!(3, a),
+
+            0xa0 => res_b_r!(4, b), 0xa1 => res_b_r!(4, c), 0xa2 => res_b_r!(4, d),
+            0xa3 => res_b_r!(4, e), 0xa4 => res_b_r!(4, h), 0xa5 => res_b_r!(4, l),
+            0xa6 => res_b_hl!(4), 0xa7 => res_b_r!(4, a),
+
+            0xa8 => res_b_r!(5, b), 0xa9 => res_b_r!(5, c), 0xaa => res_b_r!(5, d),
+            0xab => res_b_r!(5, e), 0xac => res_b_r!(5, h), 0xad => res_b_r!(5, l),
+            0xae => res_b_hl!(5), 0xaf => res_b_r!(5, a),
+
+            0xb0 => res_b_r!(6, b), 0xb1 => res_b_r!(6, c), 0xb2 => res_b_r!(6, d),
+            0xb3 => res_b_r!(6, e), 0xb4 => res_b_r!(6, h), 0xb5 => res_b_r!(6, l),
+            0xb6 => res_b_hl!(6), 0xb7 => res_b_r!(6, a),
+
+            0xb8 => res_b_r!(7, b), 0xb9 => res_b_r!(7, c), 0xba => res_b_r!(7, d),
+            0xbb => res_b_r!(7, e), 0xbc => res_b_r!(7, h), 0xbd => res_b_r!(7, l),
+            0xbe => res_b_hl!(7), 0xbf => res_b_r!(7, a),
+
+            0xc0 => set_b_r!(0, b), 0xc1 => set_b_r!(0, c), 0xc2 => set_b_r!(0, d),
+            0xc3 => set_b_r!(0, e), 0xc4 => set_b_r!(0, h), 0xc5 => set_b_r!(0, l),
+            0xc6 => set_b_hl!(0), 0xc7 => set_b_r!(0, a),
+
+            0xc8 => set_b_r!(1, b), 0xc9 => set_b_r!(1, c), 0xca => set_b_r!(1, d),
+            0xcb => set_b_r!(1, e), 0xcc => set_b_r!(1, h), 0xcd => set_b_r!(1, l),
+            0xce => set_b_hl!(1), 0xcf => set_b_r!(1, a),
+
+            0xd0 => set_b_r!(2, b), 0xd1 => set_b_r!(2, c), 0xd2 => set_b_r!(2, d),
+            0xd3 => set_b_r!(2, e), 0xd4 => set_b_r!(2, h), 0xd5 => set_b_r!(2, l),
+            0xd6 => set_b_hl!(2), 0xd7 => set_b_r!(2, a),
+
+            0xd8 => set_b_r!(3, b), 0xd9 => set_b_r!(3, c), 0xda => set_b_r!(3, d),
+            0xdb => set_b_r!(3, e), 0xdc => set_b_r!(3, h), 0xdd => set_b_r!(3, l),
+            0xde => set_b_hl!(3), 0xdf => set_b_r!(3, a),
+
+            0xe0 => set_b_r!(4, b), 0xe1 => set_b_r!(4, c), 0xe2 => set_b_r!(4, d),
+            0xe3 => set_b_r!(4, e), 0xe4 => set_b_r!(4, h), 0xe5 => set_b_r!(4, l),
+            0xe6 => set_b_hl!(4), 0xe7 => set_b_r!(4, a),
+
+            0xe8 => set_b_r!(5, b), 0xe9 => set_b_r!(5, c), 0xea => set_b_r!(5, d),
+            0xeb => set_b_r!(5, e), 0xec => set_b_r!(5, h), 0xed => set_b_r!(5, l),
+            0xee => set_b_hl!(5), 0xef => set_b_r!(5, a),
+
+            0xf0 => set_b_r!(6, b), 0xf1 => set_b_r!(6, c), 0xf2 => set_b_r!(6, d),
+            0xf3 => set_b_r!(6, e), 0xf4 => set_b_r!(6, h), 0xf5 => set_b_r!(6, l),
+            0xf6 => set_b_hl!(6), 0xf7 => set_b_r!(6, a),
+
+            0xf8 => set_b_r!(7, b), 0xf9 => set_b_r!(7, c), 0xfa => set_b_r!(7, d),
+            0xfb => set_b_r!(7, e), 0xfc => set_b_r!(7, h), 0xfd => set_b_r!(7, l),
+            0xfe => set_b_hl!(7), 0xff => set_b_r!(7, a),
+
+            _ => 0,
+        };
+
+        m_cycle
+    }
+
     fn exec_instr(&mut self, instr: u8, m: &mut Mmu) -> u32 {
         macro_rules! ld_nn {
             ($reg1: ident, $reg2: ident) => ({
@@ -98,19 +600,32 @@ impl Cpu {
         macro_rules! inc {
             ($reg: ident) => ({
                 self.r.$reg += 1;
+
+                // Clear all flags except C
                 self.r.f &= C;
-                self.r.f |= if self.r.$reg == 0 { Z } else { 0 };
-                self.r.f |= if self.r.$reg & 0xf == 0 { H } else { 0 };
+
+                if self.r.$reg == 0 { self.r.f |= Z; }
+
+                let half_carry = self.r.$reg & 0xf == 0;
+                if half_carry { self.r.f |= H }
+
                 1
             })
         }
         macro_rules! dec {
             ($reg: ident) => ({
                 self.r.$reg -= 1;
+
+                // Clear all flags except C
                 self.r.f &= C;
+
                 self.r.f |= N;
-                self.r.f |= if self.r.$reg == 0 { Z } else { 0 };
-                self.r.f |= if self.r.$reg & 0xf == 0xf { H } else { 0 };
+
+                if self.r.$reg == 0 { self.r.f |= Z; }
+
+                let half_carry = self.r.$reg & 0xf == 0xf;
+                if half_carry { self.r.f |= H; }
+
                 1
             })
         }
@@ -120,31 +635,25 @@ impl Cpu {
                 2
             })
         }
-        macro_rules! rlc_r {
-            ($reg: ident) => ({
-                let carry = if self.r.$reg & 0x80 == 0x80 { 0x1 } else { 0x0 };
-                self.r.$reg = (self.r.$reg << 1) | carry;
-                self.r.f = carry << 4;
-                2
-            })
-        }
         macro_rules! add_hl_helper {
             ($val: expr) => ({
+                // Clear all flags except for Z
                 self.r.f &= Z;
-                // TODO: Cleanup
-                self.r.f |= if ((((self.r.h as u16) << 8) | self.r.l as u16) & 0xfff) + ($val & 0xfff) > 0xfff {
-                    H
-                } else {
-                    0
-                };
-                let result = ((self.r.h as u32) << 8 | self.r.l as u32)
-                    + $val as u32;
-                self.r.f |= if result > 0xffff { C } else { 0 };
+
+                let half_carry = ((((self.r.h as u16) << 8) | self.r.l as u16) & 0xfff) + ($val & 0xfff) > 0xfff;
+                if half_carry { self.r.f |= H }
+
+                let result = ((self.r.h as u32) << 8 | self.r.l as u32) + $val as u32;
+
+                let carry = result > 0xffff;
+                if carry { self.r.f |= C }
+
                 self.r.h = (result >> 8) as u8;
                 self.r.l = result as u8;
+
                 2
             })
-        }
+        };
         macro_rules! add_hl {
             ($reg1: ident, $reg2: ident) => ({
                 add_hl_helper!(((self.r.$reg1 as u16) << 8) | self.r.$reg2 as u16)
@@ -186,6 +695,18 @@ impl Cpu {
                 add_a_helper!(self.r.$reg)
             })
         }
+
+        // add_a_n
+        // Add n to A.
+        // n = 8 byte immediate value
+        // Flags: Z 0 H C
+        macro_rules! add_a_n {
+            () => ({
+                add_a_helper!(m.rb(self.bump()));
+                2
+            })
+        }
+
         macro_rules! jr_e {
             ($cond: expr) => ({
                 let e = m.rb(self.bump()) as i8;
@@ -224,6 +745,279 @@ impl Cpu {
         macro_rules! adc_a_r {
             ($r: ident) => ({
                 adc_a_helper!(self.r.$r)
+            })
+        }
+        macro_rules! sub_sbc_r_helper {
+            ($val: expr, $c: expr) => ({
+                self.r.f = N;
+                if (self.r.a & 0xf) as i8 - ($val & 0xf) as i8 - ($c as i8) < 0x00 { self.r.f |= H; }
+                if (self.r.a as i16 - $val as i16 - $c as i16) < 0x00 { self.r.f |= C; }
+                self.r.a -= $val;
+                self.r.a -= $c;
+                if self.r.a == 0 { self.r.f |= Z; }
+                1
+            })
+        }
+        macro_rules! sub_r_helper {
+            ($val: expr) => ({
+                sub_sbc_r_helper!($val, 0x00)
+            })
+        }
+        macro_rules! sub_r {
+            ($reg: ident) => ({
+                sub_r_helper!(self.r.$reg)
+            })
+        }
+        macro_rules! sbc_a_helper {
+            ($val: expr) => ({
+                let c = if self.r.f & C == C { 0x1 } else { 0 };
+                sub_sbc_r_helper!($val, c)
+            })
+        }
+        macro_rules! sbc_a_r {
+            ($reg: ident) => ({
+                sbc_a_helper!(self.r.$reg)
+            })
+        }
+
+        // AND val
+        // Logically AND r with val, result in A.
+        // val = expr
+        // Flags: Z 0 1 0
+        macro_rules! and_val {
+            ($val: expr) => ({
+                self.r.a &= $val;
+                self.r.f = H;
+                if self.r.a == 0 { self.r.f |= Z }
+            })
+        }
+
+        // AND r
+        // Logically AND r with A, result in A.
+        // r = A, B, C, D, E, H, L
+        // Flags: Z 0 1 0
+        macro_rules! and_r {
+            ($reg: ident) => ({
+                and_val!(self.r.$reg);
+                1
+            })
+        }
+
+        // AND (HL)
+        // Logically AND (HL) with A, result in A.
+        // Flags: Z 0 1 0
+        macro_rules! and_hl {
+            () => ({
+                and_val!(m.rb(self.r.hl()));
+                2
+            })
+        }
+
+        // XOR val
+        // Logical exclusive OR r with A, result in A.
+        // val = expr
+        // Flags: Z 0 0 0
+        macro_rules! xor_val {
+            ($val: expr) => ({
+                self.r.a ^= $val;
+                self.r.f = if self.r.a == 0 { Z } else { 0x00 };
+            })
+        }
+
+        // XOR r
+        // Logical exclusive OR r with A, result in A.
+        // r = A, B, C, D, E, H, L
+        // Flags: Z 0 0 0
+        macro_rules! xor_r {
+            ($reg: ident) => ({
+                xor_val!(self.r.$reg);
+                1
+            })
+        }
+
+        // XOR (HL)
+        // Logical exclusive OR (HL) with A, result in A.
+        // Flags: Z 0 0 0
+        macro_rules! xor_hl {
+            () => ({
+                xor_val!(m.rb(self.r.hl()));
+                2
+            })
+        }
+
+        // OR val
+        // Logical OR r with A, result in A.
+        // val = expr
+        // Flags: Z 0 0 0
+        macro_rules! or_val {
+            ($val: expr) => ({
+                self.r.a |= $val;
+                self.r.f = if self.r.a == 0 { Z } else { 0x00 };
+            })
+        }
+
+        // OR r
+        // Logical OR r with A, result in A.
+        // r = A, B, C, D, E, H, L
+        // Flags: Z 0 0 0
+        macro_rules! or_r {
+            ($reg: ident) => ({
+                or_val!(self.r.$reg);
+                1
+            })
+        }
+
+        // OR (HL)
+        // Logical OR (HL) with A, result in A.
+        // Flags: Z 0 0 0
+        macro_rules! or_hl {
+            () => ({
+                or_val!(m.rb(self.r.hl()));
+                2
+            })
+        }
+
+        // CP val
+        // Compare A with val. This is basically an A - val subtraction
+        // instruction but the results are thrown away.
+        // val = expr
+        // Flags: Z 1 H C
+        macro_rules! cp_val {
+            ($val: expr) => ({
+                self.r.f = N;
+                if self.r.a == $val { self.r.f |= Z; }
+                if ((self.r.a & 0xf) as i8 - ($val & 0xf) as i8) < 0x00 { self.r.f |= H; }
+                if self.r.a < $val { self.r.f |= C; }
+            })
+        }
+
+        // CP r
+        // Compare A with r. This is basically an A - r subtraction
+        // instruction but the results are thrown away.
+        // r = A, B, C, D, E, H, L
+        // Flags: Z 1 H C
+        macro_rules! cp_r {
+            ($reg: ident) => ({
+                cp_val!(self.r.$reg);
+                1
+            })
+        }
+
+        // CP (HL)
+        // Compare A with (HL). This is basically an A - (HL) subtraction
+        // instruction but the results are thrown away.
+        // Flags: Z 1 H C
+        macro_rules! cp_hl {
+            () => ({
+                cp_val!(m.rb(self.r.hl()));
+                2
+            })
+        }
+
+        // RET cond
+        // If cond, pop two bytes from stack & jump to that address.
+        // cond = NZ, Z, NC, C
+        macro_rules! ret_cond {
+            ($cond: expr) => ({
+                if $cond {
+                    let addr = m.rw(self.r.popw());
+                    self.r.pc = addr;
+                    5
+                } else {
+                    2
+                }
+            })
+        }
+
+        // RET
+        // Pop two bytes from stack & jump to that address.
+        macro_rules! ret {
+            () => ({
+                ret_cond!(true);
+                4
+            })
+        }
+
+        // POP rr
+        // Pop two bytes off stack into register pair rr.
+        // Increment stack pointer twice.
+        // rr = AF, BC, DE, HL
+        macro_rules! pop_rr {
+            ($reg1: ident, $reg2: ident) => ({
+                self.r.$reg2 = m.rb(self.r.popb());
+                self.r.$reg1 = m.rb(self.r.popb());
+                3
+            })
+        }
+
+        // JP cond, nn
+        // Jump to nn if cond is true.
+        // cond = NZ, Z, NC, C
+        // nn = two byte immediate value (LS byte first)
+        macro_rules! jp_cond_nn {
+            ($cond: expr) => ({
+                let nn = m.rb(self.bump()) as u16 | (m.rb(self.bump()) as u16) << 8;
+                if $cond {
+                    self.r.pc = nn;
+                    4
+                } else {
+                    3
+                }
+            })
+        }
+
+        // JP nn
+        // Jump to nn.
+        // nn = two byte immediate value (LS byte first)
+        macro_rules! jp_nn {
+            () => (jp_cond_nn!(true))
+        }
+
+        // CALL cond, nn
+        // Call address nn if cond is true.
+        // cond = NZ, Z, NC, C
+        // nn = two byte immediate value (LS byte first)
+        macro_rules! call_cond_nn {
+            ($cond: expr) => ({
+                if $cond {
+                    m.ww(self.r.pushw(), self.r.pc + 2);
+                    self.r.pc = m.rw(self.r.pc);
+                    6
+                } else {
+                    self.r.pc += 2;
+                    3
+                }
+            })
+        }
+
+        // CALL nn
+        // Call address nn.
+        // nn = two byte immediate value (LS byte first)
+        macro_rules! call_nn {
+            () => (call_cond_nn!(true))
+        }
+
+        // PUSH rr
+        // Push register pair rr onto stack.
+        // Decrement stack pointer twice.
+        // rr = AF, BC, DE, HL
+        macro_rules! push_rr {
+            ($reg1: ident, $reg2: ident) => ({
+                m.wb(self.r.pushb(), self.r.$reg1);
+                m.wb(self.r.pushb(), self.r.$reg2);
+                3
+            })
+        }
+
+        // RST f
+        // Push present address onto stack.
+        // Jump to address f.
+        // f = 00h, 08h, 10h, 18h, 20h, 28h, 30h, 38h
+        macro_rules! rst_f {
+            ($f: expr) => ({
+                m.ww(self.r.pushw(), self.r.pc);
+                self.r.pc = $f;
+                4
             })
         }
 
@@ -292,7 +1086,7 @@ impl Cpu {
             0x24 => inc!(h), // INC H
             0x25 => dec!(h), // DEC H
             0x26 => ld_n!(h), // LD H
-            0x27 => self.op_daa(m), // DAA
+            0x27 => self.op_daa(), // DAA
             0x28 => jr_e!(self.r.f & Z == Z), // JR Z, e
             0x29 => add_hl!(h, l), // ADD HL, HL
             0x2a => { // LDI A, (HL)
@@ -443,6 +1237,57 @@ impl Cpu {
             0x8c => adc_a_r!(h), // ADC A, H
             0x8d => adc_a_r!(l), // ADC A, L
             0x8e => adc_a_helper!(m.rb(self.r.hl())) + 1,
+            // TODO: Test
+            0x8f => adc_a_r!(a), // ADC A, A
+            0x90 => sub_r!(b), // SUB B
+            0x91 => sub_r!(c), // SUB C
+            0x92 => sub_r!(d), // SUB D
+            0x93 => sub_r!(e), // SUB E
+            0x94 => sub_r!(h), // SUB H
+            0x95 => sub_r!(l), // SUB L
+            0x96 => sub_r_helper!(m.rb(self.r.hl())) + 1, // SUB (HL)
+            0x97 => sub_r!(a), // SUB A
+            0x98 => sbc_a_r!(b), // SBC A, B
+            0x99 => sbc_a_r!(c), // SBC A, C
+            0x9a => sbc_a_r!(d), // SBC A, D
+            0x9b => sbc_a_r!(e), // SBC A, E
+            0x9c => sbc_a_r!(h), // SBC A, H
+            0x9d => sbc_a_r!(l), // SBC A, L
+            0x9e => sbc_a_helper!(m.rb(self.r.hl())) + 1, // SBC A, (HL)
+            // TODO: Test
+            0x9f => sbc_a_r!(a), // SBC A, A
+
+            0xa0 => and_r!(b), 0xa1 => and_r!(c), 0xa2 => and_r!(d),
+            0xa3 => and_r!(e), 0xa4 => and_r!(h), 0xa5 => and_r!(l),
+            0xa6 => and_hl!(), 0xa7 => and_r!(a),
+
+            0xa8 => xor_r!(b), 0xa9 => xor_r!(c), 0xaa => xor_r!(d),
+            0xab => xor_r!(e), 0xac => xor_r!(h), 0xad => xor_r!(l),
+            0xae => xor_hl!(), 0xaf => xor_r!(a),
+
+            0xb0 => or_r!(b), 0xb1 => or_r!(c), 0xb2 => or_r!(d),
+            0xb3 => or_r!(e), 0xb4 => or_r!(h), 0xb5 => or_r!(l),
+            0xb6 => or_hl!(), 0xb7 => or_r!(a),
+
+            0xb8 => cp_r!(b), 0xb9 => cp_r!(c), 0xba => cp_r!(d),
+            0xbb => cp_r!(e), 0xbc => cp_r!(h), 0xbd => cp_r!(l),
+            0xbe => cp_hl!(), 0xbf => cp_r!(a),
+
+            0xc0 => ret_cond!(self.r.nz()), // RET NZ
+            0xc1 => pop_rr!(b, c), // POP BC
+            0xc2 => jp_cond_nn!(self.r.nz()), // JP NZ, nn
+            0xc3 => jp_nn!(), // JP nn
+            0xc4 => call_cond_nn!(self.r.nz()), // CALL NZ, nn
+            0xc5 => push_rr!(b, c), // PUSH BC
+            0xc6 => add_a_n!(), // ADD A, n
+            0xc7 => rst_f!(0x00), // RST 00h
+            0xc8 => ret_cond!(self.r.z()), // RET Z
+            0xc9 => ret!(), // RET
+            0xca => jp_cond_nn!(self.r.z()), // JP Z, nn
+            0xcb => { // CB prefix
+                let op = m.rb(self.bump());
+                self.exec_cb_instr(op, m)
+            }
 
             _ => 0
         };
@@ -456,7 +1301,7 @@ impl Cpu {
 #[cfg(test)]
 mod test {
     use cpu::Cpu;
-    use cpu::{Z, N, H, C};
+    use registers::{Z, N, H, C};
     use mmu::Mmu;
 
     fn init() -> (Cpu, Mmu) {
@@ -1362,5 +2207,99 @@ mod test {
 
         // only carry
         adc_a_hl_helper!(0xf2, 0xd0, 0x00, 0x34, C);
+    }
+
+    #[test]
+    fn sub_r() {
+        macro_rules! sub_r_helper {
+            ($r: ident, $a: expr, $r_val: expr, $op: expr, $expected_f: expr) => ({
+                let (mut c, mut m) = init();
+                c.r.a = $a;
+                c.r.$r = $r_val;
+                c.r.f = C;
+                op(&mut c, &mut m, $op, 1, 1);
+                assert_eq!(c.r.a, ($a as i16 - $r_val as i16) as u8);
+                assert_eq!(c.r.f, N | $expected_f);
+            })
+        }
+
+        macro_rules! sub_r {
+            ($r: ident, $op: expr) => ({
+                sub_r_helper!($r, 0x12, 0x01, $op, 0x00);
+
+                // zero
+                sub_r_helper!($r, 0xf0, 0xf0, $op, Z);
+
+                // half carry and carry
+                sub_r_helper!($r, 0x00, 0x01, $op, H | C);
+
+                // half carry
+                sub_r_helper!($r, 0x10, 0x01, $op, H);
+
+                // only carry
+                sub_r_helper!($r, 0xe0, 0xf0, $op, C);
+            })
+        }
+
+        sub_r!(b, 0x90);
+        sub_r!(c, 0x91);
+        sub_r!(d, 0x92);
+        sub_r!(e, 0x93);
+        sub_r!(h, 0x94);
+        sub_r!(l, 0x95);
+        // sub_r!(a, 0x97);
+    }
+
+    #[test]
+    fn sub_hl() {
+        macro_rules! sub_hl_helper {
+            ($a: expr, $h: expr, $l: expr, $val: expr, $expected_f: expr) => ({
+                let (mut c, mut m) = init();
+                c.r.a = $a;
+                c.r.h = $h;
+                c.r.l = $l;
+                m.wb(c.r.hl(), $val);
+                op(&mut c, &mut m, 0x96, 1, 2);
+                assert_eq!(c.r.a, ($a as i16 - $val as i16) as u8);
+                assert_eq!(c.r.f, N | $expected_f);
+            })
+        }
+
+        sub_hl_helper!(0x12, 0xd0, 0x00, 0x01, 0x00);
+        sub_hl_helper!(0x80, 0xd0, 0x00, 0x80, Z);
+        sub_hl_helper!(0x00, 0xd0, 0x00, 0x01, H | C);
+        sub_hl_helper!(0x20, 0xd0, 0x00, 0x1f, H);
+        sub_hl_helper!(0xe0, 0xd0, 0x00, 0xf0, C);
+    }
+
+    #[test]
+    fn sbc_a_r() {
+        macro_rules! sbc_a_r_helper {
+            ($r: ident, $a: expr, $r_val: expr, $op: expr, $expected_f: expr) => ({
+                let (mut c, mut m) = init();
+                c.r.a = $a;
+                c.r.$r = $r_val;
+                c.r.f = C;
+                op(&mut c, &mut m, $op, 1, 1);
+                assert_eq!(c.r.a, ($a as i16 - $r_val as i16 - 0x1) as u8);
+                assert_eq!(c.r.f, N | $expected_f);
+            })
+        }
+        macro_rules! sbc_a_r {
+            ($r: ident, $op: expr) => ({
+                sbc_a_r_helper!($r, 0x12, 0x01, $op, 0x00);
+                sbc_a_r_helper!($r, 0xd0, 0xcf, $op, Z | H);
+                sbc_a_r_helper!($r, 0x00, 0x00, $op, H | C);
+                sbc_a_r_helper!($r, 0x20, 0x00, $op, H);
+                sbc_a_r_helper!($r, 0xd1, 0xe0, $op, C);
+            })
+        }
+
+        sbc_a_r!(b, 0x98);
+        sbc_a_r!(c, 0x99);
+        sbc_a_r!(d, 0x9a);
+        sbc_a_r!(e, 0x9b);
+        sbc_a_r!(h, 0x9c);
+        sbc_a_r!(l, 0x9d);
     }
 }
