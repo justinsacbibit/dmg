@@ -580,11 +580,17 @@ impl Cpu {
         m_cycle
     }
 
+    // n
+    // Read the byte at the pc, then increment the pc
+    fn n(&mut self, m: &mut Mmu) -> u8 {
+        m.rb(self.bump())
+    }
+
     fn exec_instr(&mut self, instr: u8, m: &mut Mmu) -> u32 {
         macro_rules! ld_nn {
             ($reg1: ident, $reg2: ident) => ({
-                self.r.$reg1 = m.rb(self.bump());
-                self.r.$reg2 = m.rb(self.bump());
+                self.r.$reg1 = self.n(m);
+                self.r.$reg2 = self.n(m);
                 3
             })
         }
@@ -631,7 +637,7 @@ impl Cpu {
         }
         macro_rules! ld_n {
             ($reg: ident) => ({
-                self.r.$reg = m.rb(self.bump());
+                self.r.$reg = self.n(m);
                 2
             })
         }
@@ -698,18 +704,18 @@ impl Cpu {
 
         // add_a_n
         // Add n to A.
-        // n = 8 byte immediate value
+        // n = 8 bit immediate value
         // Flags: Z 0 H C
         macro_rules! add_a_n {
             () => ({
-                add_a_helper!(m.rb(self.bump()));
+                add_a_helper!(self.n(m));
                 2
             })
         }
 
         macro_rules! jr_e {
             ($cond: expr) => ({
-                let e = m.rb(self.bump()) as i8;
+                let e = self.n(m) as i8;
                 if $cond {
                     if e < 0 { self.r.pc -= (-e) as u16; } else { self.r.pc += e as u16; }
                     3
@@ -747,6 +753,18 @@ impl Cpu {
                 adc_a_helper!(self.r.$r)
             })
         }
+
+        // ADC A, n
+        // Add n + carry flag to A.
+        // n = 8 bit immediate value
+        // Flags: Z 0 H C
+        macro_rules! adc_a_n {
+            () => ({
+                adc_a_helper!(self.n(m));
+                2
+            })
+        }
+
         macro_rules! sub_sbc_r_helper {
             ($val: expr, $c: expr) => ({
                 self.r.f = N;
@@ -768,6 +786,18 @@ impl Cpu {
                 sub_r_helper!(self.r.$reg)
             })
         }
+
+        // SUB n
+        // Subtract n from A.
+        // n = 8 bit immediate value
+        // Flags: Z 1 H C
+        macro_rules! sub_n {
+            () => ({
+                sub_r_helper!(self.n(m));
+                2
+            })
+        }
+
         macro_rules! sbc_a_helper {
             ($val: expr) => ({
                 let c = if self.r.f & C == C { 0x1 } else { 0 };
@@ -777,6 +807,16 @@ impl Cpu {
         macro_rules! sbc_a_r {
             ($reg: ident) => ({
                 sbc_a_helper!(self.r.$reg)
+            })
+        }
+
+        // SBC A, n
+        // Subtract n + carry flag from A.
+        // Flags: Z 1 H C
+        macro_rules! sbc_a_n {
+            () => ({
+                sbc_a_helper!(self.n(m));
+                2
             })
         }
 
@@ -841,6 +881,16 @@ impl Cpu {
         macro_rules! xor_hl {
             () => ({
                 xor_val!(m.rb(self.r.hl()));
+                2
+            })
+        }
+
+        // XOR n
+        // Logical exclusive OR n with A, result in A.
+        // Flags: Z 0 0 0
+        macro_rules! xor_n {
+            () => ({
+                xor_val!(self.n(m));
                 2
             })
         }
@@ -956,7 +1006,7 @@ impl Cpu {
         // nn = two byte immediate value (LS byte first)
         macro_rules! jp_cond_nn {
             ($cond: expr) => ({
-                let nn = m.rb(self.bump()) as u16 | (m.rb(self.bump()) as u16) << 8;
+                let nn = self.n(m) as u16 | (self.n(m) as u16) << 8;
                 if $cond {
                     self.r.pc = nn;
                     4
@@ -1018,6 +1068,130 @@ impl Cpu {
                 m.ww(self.r.pushw(), self.r.pc);
                 self.r.pc = $f;
                 4
+            })
+        }
+
+        // RETI
+        // Pop two bytes from stack & jump to that address then enable interrupts.
+        macro_rules! reti {
+            () => ({
+                let address = m.rw(self.r.popw());
+                self.r.pc = address;
+                // TODO: Enable interrupts
+                4
+            })
+        }
+
+        // LDH (n), A
+        // Put A into memory address $FF00+n.
+        // n = 8 bit immediate value
+        macro_rules! ldh_n_a {
+            () => ({
+                let addr = 0xff00 | self.n(m) as u16;
+                m.wb(addr, self.r.a);
+                3
+            })
+        }
+
+        // LD (C), A
+        // Put A into address $FF00 + register C.
+        macro_rules! ld_c_a {
+            () => ({
+                let addr = 0xff00 | self.r.c as u16;
+                m.wb(addr, self.r.a);
+                2
+            })
+        }
+
+        // AND n
+        // Logically AND n with A, result in A.
+        // n = 8 bit immediate value
+        // Flags: Z 0 1 0
+        macro_rules! and_n {
+            () => ({
+                and_val!(self.n(m));
+                2
+            })
+        }
+
+        // ADD SP, n
+        // Add n to stack pointer.
+        // n = 8 bit immediate value
+        // Flags: 0 0 H C
+        macro_rules! add_sp_n {
+            () => ({
+                self.r.f = 0x00;
+                let b = self.n(m) as i8 as i16 as u16;
+                // black magic incoming
+                let res = self.r.sp + b;
+                let tmp = b ^ res ^ self.r.sp;
+                if tmp & 0x100 != 0 { self.r.f |= C };
+                if tmp & 0x010 != 0 { self.r.f |= H };
+                self.r.sp = res;
+                4
+            })
+        }
+
+        // JP (HL)
+        // Jump to address contained in HL.
+        macro_rules! jp_hl {
+            () => ({
+                self.r.pc = self.r.hl();
+                1
+            })
+        }
+
+        // LD nn, A
+        // Put value A into the address contained in nn.
+        // nn = 16 bit immediate value
+        macro_rules! ld_nn_a {
+            () => ({
+                let addr = m.rw(self.r.pc);
+                self.r.pc += 2;
+                m.wb(addr, self.r.a);
+                4
+            })
+        }
+
+        // LDH (n), A
+        // Put A into memory address $FF00+n.
+        // n = 8 bit immediate value
+        macro_rules! ldh_n_a {
+            () => ({
+                let addr = 0xff00 | self.n(m) as u16;
+                m.wb(addr, self.r.a);
+                3
+            })
+        }
+
+        // LDH A, (n)
+        // Put value at address $FF00 + n into A.
+        // n = 8 bit immediate value
+        macro_rules! ldh_a_n {
+            () => ({
+                let addr = 0xff00 | (self.n(m) as u16);
+                self.r.a = m.rb(addr);
+                3
+            })
+        }
+
+        // LD A, (C)
+        // Put value at address $FF00 + register C into A.
+        macro_rules! ld_a_c {
+            () => ({
+                let addr = 0xff00 | (self.r.c as u16);
+                self.r.a = m.rb(addr);
+                2
+            })
+        }
+
+        // DI
+        // This instruction disables interrupts but not immediately. Interrupts
+        // are disabled after instruction after DI is executed.
+        macro_rules! di {
+            () => ({
+                // TODO
+                1
             })
         }
 
@@ -1137,7 +1311,7 @@ impl Cpu {
                 3
             }
             0x36 => { // LD (HL), n
-                let value = m.rb(self.bump());
+                let value = self.n(m);
                 m.wb(self.r.hl(), value);
                 3
             }
@@ -1285,9 +1459,40 @@ impl Cpu {
             0xc9 => ret!(), // RET
             0xca => jp_cond_nn!(self.r.z()), // JP Z, nn
             0xcb => { // CB prefix
-                let op = m.rb(self.bump());
+                let op = self.n(m);
                 self.exec_cb_instr(op, m)
             }
+            0xcc => call_cond_nn!(self.r.z()), // CALL Z, nn
+            0xcd => call_nn!(), // CALL nn
+            0xce => adc_a_n!(), // ADC A, n
+            0xcf => rst_f!(0x08), // RST 08h
+            0xd0 => ret_cond!(self.r.nc()), // RET NC
+            0xd1 => pop_rr!(d, e), // POP DE
+            0xd2 => jp_cond_nn!(self.r.nc()), // JP NC, nn
+            0xd4 => call_cond_nn!(self.r.nc()), // CALL NC, nn
+            0xd5 => push_rr!(d, e), // PUSH DE
+            0xd6 => sub_n!(), // SUB n
+            0xd7 => rst_f!(0x10), // RST 10h
+            0xd8 => ret_cond!(self.r.c()), // RET C
+            0xd9 => reti!(), // RETI
+            0xda => jp_cond_nn!(self.r.c()), // JP C, nn
+            0xdc => call_cond_nn!(self.r.c()), // CALL C, nn
+            0xdf => sbc_a_n!(), // SBC A, n
+            0xe0 => ldh_n_a!(), // LDH (n), A
+            0xe1 => pop_rr!(h, l), // POP HL
+            0xe2 => ld_c_a!(), // LD (C), A
+            0xe5 => push_rr!(h, l), // PUSH HL
+            0xe6 => and_n!(), // AND n
+            0xe7 => rst_f!(0x20), // RST 20h
+            0xe8 => add_sp_n!(), // ADD SP, n
+            0xe9 => jp_hl!(), // JP (HL)
+            0xea => ld_nn_a!(), // LD (nn), A
+            0xee => xor_n!(), // XOR n
+            0xef => rst_f!(0x28), // RST 28h
+            0xf0 => ldh_a_n!(), // LDH A, (n)
+            0xf1 => pop_rr!(a, f), // POP AF
+            0xf2 => ld_a_c!(), // LD A, (C)
+            0xf3 => di!(), // DI
 
             _ => 0
         };

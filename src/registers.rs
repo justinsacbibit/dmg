@@ -77,4 +77,16 @@ impl Registers {
     pub fn nz(&self) -> bool {
         !self.z()
     }
+
+    // c
+    // Checks if C flag is set.
+    pub fn c(&self) -> bool {
+        self.f & C == C
+    }
+
+    // nc
+    // Checks if C flag is not set.
+    pub fn nc(&self) -> bool {
+        !self.c()
+    }
 }
