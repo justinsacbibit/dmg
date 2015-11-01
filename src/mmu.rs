@@ -185,6 +185,14 @@ impl Mmu {
         self.wb(addr, (val >> 8) as u8);
         self.wb(addr + 1, val as u8);
     }
+
+    pub fn load_cartridge(&mut self, rom: Vec<u8>) {
+        self.rom = rom;
+
+        match self.rom[0x0147] {
+            _ => {}
+        }
+    }
 }
 
 #[cfg(test)]

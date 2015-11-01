@@ -7,3 +7,6 @@ authors = ["Justin Sacbibit <jsacbibit@gmail.com>"]
 debug-assertions = false
 [profile.test]
 debug-assertions = false
+
+[dependencies]
+sdl2 = "*"

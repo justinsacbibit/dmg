@@ -5,9 +5,9 @@ use super::registers::Registers;
 pub struct Cpu {
     // Clock
     m: u32,
-    t: u32,
+    pub t: u32,
 
-    r: Registers,
+    pub r: Registers,
 }
 
 impl Cpu {
